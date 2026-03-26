@@ -1,37 +1,56 @@
 # Bootstrapper
 
-A minimalist and unopinionated bootstrapper for Roblox. Discover and require modules, manage lifecycles, and connect to (RunService) events.
+A lightweight and unopinionated lifecycle manager for Roblox. Find and load modules, run their functions, and bind them to RunService without the boilerplate.
 
 ## Features
 
-* **Unopinionated:** No forced folder structures or naming conventions. You decide how your project is organized.
-* **Universal Event Routing:** Binds seamlessly to `RBXScriptSignals`, Signal modules, subscription methods, and more.
-* **Non-Invasive:** Your modules stay clean.
+**Zero Boilerplate:** Load entire folders of modules and connect them to events in three lines of code.
 
----
+**Safe Booting:** Syntax errors or crashing functions in one module won't stop the rest of your game from loading.
 
-## Quick Start
+**Deterministic Order:** Use `loadSequence` or `getSorted` to guarantee order of operations.
+
+**Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and RunService events.
+
+**RunService Integration:** Binds directly to RunService events, fully supporting native priorities and frequencies.
+
+## Installation
+
+### Wally
+
+The package name + version is
+
+```
+ldgerrits/bootstrapper@^1.0.0
+```
+
+## Usage
 
 ### 1. Find & Load Modules
+Discover your modules and determine how they handle self injection.
 ```lua
 local Bootstrapper = require(path.to.Bootstrapper)
 
-local services = Bootstrapper.loadDescendants(script.Parent.Services, {
+local services, loadErrors = Bootstrapper.loadDescendants(script.Parent.Services, {
     predicate = Bootstrapper.matchesName("Service$"),
     self = true -- Default
 })
 ```
 
 ### 2. Lifecycles
+
+Execute methods across all loaded modules.
 ```Lua
 -- Block thread until all 'init' methods finish
-Bootstrapper.callSync(services, "init", sharedConfig)
+Bootstrapper.callSync(services, "init", gameState)
 
 -- Fire 'start' methods and move on immediately
 Bootstrapper.callAsync(services, "start")
 ```
 
 ### 3. Events
+
+Route engine and game events directly to your module methods.
 ```Lua
 -- Hook into RunService
 local cleanupHeartbeat = Bootstrapper.heartbeat(services, "onHeartbeat")
@@ -44,14 +63,12 @@ cleanupHeartbeat()
 cleanupPlayerAdded()
 ```
 
----
-
 ## API
 
 ### Discovery
 
 `Bootstrapper.matchesName(matchName: string) -> Predicate`
-Creates a name-matching filter to be used in the discovery options.
+Creates a name-matching filter to be used as predicate in options.
 
 `Bootstrapper.loadChildren(parent: Instance, options: { predicate: Predicate?, self: boolean? }? ) -> Modules`
 Requires all direct child ModuleScripts. Use `{ self = false }` in options to treat them as static modules.
@@ -59,12 +76,21 @@ Requires all direct child ModuleScripts. Use `{ self = false }` in options to tr
 `Bootstrapper.loadDescendants(parent: Instance, options: { predicate: Predicate?, self: boolean? }? ) -> Modules`
 Recursively requires all descendant ModuleScripts. Use `{ self = false }` to treat them as static modules.
 
+`Bootstrapper.loadSequence(parent: Instance?, sequence: {string | ModuleScript}, options: Options?) -> (Modules, {[ModuleScript]: string})`
+Requires specific modules in a guaranteed execution order. Returns an ordered array of successful modules and a map of errors.
+
+`Bootstrapper.getSorted(modules: Modules, sortFunction: function?) -> {any}`
+Converts a module dictionary into a deterministic array. Defaults to alphabetical sort by module name.
+
+`Bootstrapper.combine(...: Modules) -> Modules`
+Merges multiple module collections into one.
+
 ---
 
 ### Execution
 
-`Bootstrapper.callSync(modules: Modules, methodName: string, ...any): ()`
-*Yields.* Invokes the method on all modules concurrently and yields the calling thread until all have finished. Supports varargs.
+`Bootstrapper.callSync(modules: Modules, methodName: string, ...any) -> (Modules, {[any]: string})`
+*Yields.* Invokes the method concurrently on all modules and yields the calling thread until all have finished. Returns a table of successful modules and a map of modules that crashed. Supports varargs.
 
 `Bootstrapper.callAsync(modules: Modules, methodName: string, ...any): ()`
 Invokes the method on all modules asynchronously via `task.spawn`. Supports varargs.

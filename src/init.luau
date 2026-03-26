@@ -4,7 +4,7 @@
 
 local RunService = game:GetService('RunService')
 
-export type Modules = { [string]: any }
+export type Modules = { [string]: any } | { any }
 export type Predicate = (module: ModuleScript) -> boolean
 
 export type Signal =
@@ -27,9 +27,37 @@ export type Task =
 
 --[=[
 	@class Bootstrapper
-	A lightweight, zero-dependency utility for discovering modules, managing lifecycles, and natively binding to events/loops.
+	A lightweight and unopinionated lifecycle manager for Roblox. 
+	Find and load modules, run their functions, and bind them to RunService events.
 ]=]
 local Bootstrapper = {}
+
+local function nonFatalError(messageTemplate: string, trace: string?, ...: any)
+	local messageText = string.format(messageTemplate, ...)
+	messageText = `[Bootstrapper] {messageText}`
+
+	if trace and trace ~= '' then
+		messageText ..= `\n---- Stack trace ----\n{trace}`
+	end
+
+	local formattedString = messageText:gsub('\n', '\n    ')
+
+	task.spawn(function()
+		error(formattedString, 0)
+	end)
+end
+
+local moduleNameRegistry = setmetatable({}, { __mode = 'k' })
+
+local function getModuleName(module: any, fallbackKey: any): string
+	if type(module) == 'table' then
+		local registeredName = moduleNameRegistry[module]
+		if registeredName then
+			return registeredName
+		end
+	end
+	return tostring(fallbackKey)
+end
 
 local injectSelfRegistry = setmetatable({}, { __mode = 'k' })
 
@@ -80,24 +108,27 @@ local function bindToRunService(
 ): Cleanup
 	local tasks: { Task } = {}
 
-	for name, module in modules do
-		local method = module[methodName]
-		if type(method) ~= 'function' then
+	for key, module in modules :: { [any]: any } do
+		local fn = module[methodName]
+		if type(fn) ~= 'function' then
 			continue
 		end
 
+		local actualName = getModuleName(module, key)
+
 		local function run(...)
+			debug.setmemorycategory(actualName)
 			local useSelf = shouldInjectSelf(module)
 			if useSelf then
-				method(module, ...)
+				fn(module, ...)
 			else
-				method(...)
+				fn(...)
 			end
 		end
 
 		if (eventName == 'RenderStepped' or eventName == 'PreRender') and RunService:IsClient() then
 			if type(override) == 'number' then
-				local bindName = `{name}_{methodName}`
+				local bindName = `{actualName}_{methodName}`
 				RunService:BindToRenderStep(bindName, override, run)
 				table.insert(tasks, function()
 					RunService:UnbindFromRenderStep(bindName)
@@ -144,8 +175,8 @@ end
 	@function loadChildren
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
-	@param options { predicate: Predicate?, useSelf: boolean? }? -- Options for filtering and self-injection.
-	@return Modules
+	@param options { predicate: Predicate?, self: boolean? }? -- Options for filtering and self-injection.
+	@return Modules, {[ModuleScript]: string} -- (Successful Modules, Failed Scripts)
 ]=]
 function Bootstrapper.loadChildren(
 	parent: Instance,
@@ -153,8 +184,10 @@ function Bootstrapper.loadChildren(
 		predicate: Predicate?,
 		self: boolean?,
 	}?
-): Modules
+): (Modules, { [ModuleScript]: string })
 	local modules = {}
+	local failed: { [ModuleScript]: string } = {}
+
 	local predicate = if options then options.predicate else nil
 	local shouldInject = not options or options.self ~= false
 
@@ -163,14 +196,22 @@ function Bootstrapper.loadChildren(
 			if predicate and not predicate(child) then
 				continue
 			end
-			local req = require(child) :: any
-			if type(req) == 'table' then
-				injectSelfRegistry[req] = shouldInject
+
+			local success, req = pcall(require, child)
+			if success then
+				if type(req) == 'table' then
+					injectSelfRegistry[req] = shouldInject
+					moduleNameRegistry[req] = child.Name
+				end
+				modules[child.Name] = req
+			else
+				failed[child] = tostring(req)
+				nonFatalError("Failed to load '%s':\n%s", nil, child.Name, tostring(req))
 			end
-			modules[child.Name] = req
 		end
 	end
-	return modules
+
+	return modules, failed
 end
 
 --[=[
@@ -178,8 +219,8 @@ end
 	@function loadDescendants
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
-	@param options { predicate: Predicate?, useSelf: boolean? }? -- Options for filtering and self-injection.
-	@return Modules
+	@param options { predicate: Predicate?, self: boolean? }? -- Options for filtering and self-injection.
+	@return Modules, {[ModuleScript]: string} -- (Successful Modules, Failed Scripts)
 ]=]
 function Bootstrapper.loadDescendants(
 	parent: Instance,
@@ -187,8 +228,10 @@ function Bootstrapper.loadDescendants(
 		predicate: Predicate?,
 		self: boolean?,
 	}?
-): Modules
+): (Modules, { [ModuleScript]: string })
 	local modules = {}
+	local failed: { [ModuleScript]: string } = {}
+
 	local predicate = if options then options.predicate else nil
 	local shouldInject = not options or options.self ~= false
 
@@ -197,46 +240,180 @@ function Bootstrapper.loadDescendants(
 			if predicate and not predicate(descendant) then
 				continue
 			end
-			local req = require(descendant) :: any
-			if type(req) == 'table' then
-				injectSelfRegistry[req] = shouldInject
+
+			local success, req = pcall(require, descendant)
+			if success then
+				if type(req) == 'table' then
+					injectSelfRegistry[req] = shouldInject
+					moduleNameRegistry[req] = descendant.Name
+				end
+				modules[descendant.Name] = req
+			else
+				failed[descendant] = tostring(req)
+				nonFatalError("Failed to load '%s':\n%s", nil, descendant.Name, tostring(req))
 			end
-			modules[descendant.Name] = req
 		end
 	end
-	return modules
+
+	return modules, failed
+end
+
+--[=[
+	Requires specific modules in a guaranteed order.
+	@function loadSequence
+	@within Bootstrapper
+	@param parent Instance -- The Instance to search within.
+	@param sequence -- Array of ModuleScripts or strings.
+	@param options { predicate: Predicate?, self: boolean? }? -- Options for filtering and self-injection.
+	@return {any}, {[ModuleScript]: string} -- (Ordered Modules, Failed Scripts)
+]=]
+function Bootstrapper.loadSequence(
+	parent: Instance,
+	sequence: { string | ModuleScript },
+	options: {
+		predicate: Predicate?,
+		self: boolean?,
+	}?
+): ({ any }, { [ModuleScript]: string })
+	local modules = {}
+	local failed: { [ModuleScript]: string } = {}
+	local shouldInject = not options or options.self ~= false
+
+	for _, item in sequence do
+		local child: ModuleScript?
+
+		if typeof(item) == 'Instance' and item:IsA('ModuleScript') then
+			child = item
+		elseif type(item) == 'string' and parent then
+			child = parent:FindFirstChild(item) :: ModuleScript
+		end
+
+		if child then
+			local success, req = pcall(require, child)
+			if success then
+				if type(req) == 'table' then
+					injectSelfRegistry[req] = shouldInject
+					moduleNameRegistry[req] = child.Name
+				end
+				table.insert(modules, req)
+			else
+				failed[child] = tostring(req)
+				nonFatalError("Sequence failed to load '%s':\n%s", nil, child.Name, tostring(req))
+			end
+		else
+			nonFatalError('Sequence could not find module: %s', nil, tostring(item))
+		end
+	end
+
+	return modules, failed
+end
+
+--[=[
+	Converts a module dictionary into a deterministic array.
+	If no sort function is provided, it defaults to alphabetical by module name.
+	@function getSorted
+	@within Bootstrapper
+	@param modules Modules -- The dictionary of modules to sort.
+	@param sortFunction ((a: string, b: string) -> boolean)? -- Optional custom sort function.
+	@return {any} -- An array of modules sorted deterministically.
+]=]
+function Bootstrapper.getSorted(modules: Modules, sortFunction: ((a: string, b: string) -> boolean)?): { any }
+	local iterModules = modules :: { [string]: any }
+	local keys = {}
+
+	for name in iterModules do
+		table.insert(keys, name)
+	end
+
+	table.sort(keys, sortFunction or function(a, b)
+		return a < b
+	end)
+
+	local sorted = {}
+	for _, name in keys do
+		table.insert(sorted, iterModules[name])
+	end
+
+	return sorted
+end
+
+--[=[
+	Combines multiple module collections into a single collection.
+	If all inputs are arrays, the result is an array. If any are dictionaries, the result is a dictionary.
+	@function combine
+	@within Bootstrapper
+	@param ... Modules -- Variadic list of module collections to merge.
+	@return Modules -- The merged collection.
+]=]
+function Bootstrapper.combine(...: Modules): Modules
+	local args = { ... }
+	local isAllArray = true
+
+	for _, collection in args do
+		if not (collection :: any)[1] and next(collection :: any) ~= nil then
+			isAllArray = false
+			break
+		end
+	end
+
+	if isAllArray then
+		local result = {}
+		for _, collection in args do
+			for _, module in collection :: { any } do
+				table.insert(result, module)
+			end
+		end
+		return result
+	else
+		local result: { [string]: any } = {}
+		for _, collection in args do
+			for key, module in collection :: { [any]: any } do
+				result[tostring(key)] = module
+			end
+		end
+		return result
+	end
 end
 
 --[=[
 	Executes a method on all modules and yields the calling thread until all modules have finished.
+	Returns (passed, failed) where passed matches the input structure (Array or Map).
 	@yields
 	@function callSync
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of loaded modules.
+	@param modules Modules -- The dictionary or array of loaded modules.
 	@param methodName string -- The name of the function to call on the modules.
 	@param ... any -- Additional arguments to pass to the method.
+	@return Modules, {[any]: string} -- (Successful Modules, Failure Map)
 ]=]
-function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): ()
+function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): (Modules, { [any]: string })
 	local mainThread = coroutine.running()
 	local total, done = 0, 0
 
-	for _, module in modules do
+	local iterModules = modules :: { [any]: any }
+	local passed: any = {}
+	local failed: { [any]: string } = {}
+
+	local isArray = (modules :: any)[1] ~= nil
+
+	for _, module in iterModules do
 		if type(module[methodName]) == 'function' then
 			total += 1
 		end
 	end
 
 	if total == 0 then
-		return 0, 0
+		return passed, failed
 	end
 
-	for name, module in modules do
+	for key, module in iterModules do
 		local fn = module[methodName]
 		if type(fn) == 'function' then
 			local useSelf = shouldInjectSelf(module)
+			local actualName = getModuleName(module, key)
 
 			task.spawn(function(...)
-				debug.setmemorycategory(name)
+				debug.setmemorycategory(actualName)
 
 				local success, err = xpcall(function(...)
 					if useSelf then
@@ -244,10 +421,19 @@ function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): 
 					else
 						fn(...)
 					end
-				end, debug.traceback, ...)
+				end, function(e)
+					return { msg = tostring(e), trace = debug.traceback('', 2) }
+				end, ...)
 
-				if not success then
-					warn(`[Bootstrapper] Error in {name}:{methodName} - {err}`)
+				if success then
+					if isArray then
+						table.insert(passed, module)
+					else
+						passed[key] = module
+					end
+				else
+					failed[module] = err.msg
+					nonFatalError('Error in %s:%s()\n%s', err.trace, actualName, methodName, err.msg)
 				end
 
 				done += 1
@@ -259,24 +445,26 @@ function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): 
 	end
 
 	coroutine.yield()
+	return passed, failed
 end
 
 --[=[
 	Executes a method on all modules asynchronously using `task.spawn` (Fire and forget).
 	@function callAsync
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of loaded modules.
+	@param modules Modules -- The dictionary or array of loaded modules.
 	@param methodName string -- The name of the function to call on the modules.
 	@param ... any -- Additional arguments to pass to the method.
 ]=]
 function Bootstrapper.callAsync(modules: Modules, methodName: string, ...: any): ()
-	for name, module in modules do
+	for key, module in modules :: { [any]: any } do
 		local fn = module[methodName]
 		if type(fn) == 'function' then
 			local useSelf = shouldInjectSelf(module)
+			local actualName = getModuleName(module, key)
 
 			local function wrapper(...)
-				debug.setmemorycategory(name)
+				debug.setmemorycategory(actualName)
 				if useSelf then
 					fn(module, ...)
 				else
@@ -292,7 +480,7 @@ end
 	Binds a method across all modules to a Signal, Custom Signal, or Callback Subscription.
 	@function bind
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of loaded modules.
+	@param modules Modules -- The dictionary or array of loaded modules.
 	@param source EventSource -- A Signal (e.g., PlayerAdded) or a subscription function.
 	@param methodName string -- The name of the function to trigger.
 	@return Cleanup -- A uniform cleanup function to disconnect the event.
@@ -301,32 +489,40 @@ function Bootstrapper.bind(modules: Modules, source: EventSource, methodName: st
 	local tasks: { Task } = {}
 
 	if type(source) == 'function' then
-		for _, module in modules do
+		for key, module in modules :: { [any]: any } do
 			local fn = module[methodName]
 			if type(fn) == 'function' then
-				local task = source(function(...)
+				local actualName = getModuleName(module, key)
+				local taskInstance = source(function(...)
 					local useSelf = shouldInjectSelf(module)
-					if useSelf then
-						task.spawn(fn, module, ...)
-					else
-						task.spawn(fn, ...)
-					end
+					task.spawn(function(...)
+						debug.setmemorycategory(actualName)
+						if useSelf then
+							fn(module, ...)
+						else
+							fn(...)
+						end
+					end, ...)
 				end)
-				table.insert(tasks, task)
+				table.insert(tasks, taskInstance)
 			end
 		end
 	else
 		local connectMethod = (source :: any).Connect or (source :: any).connect
 		local connection = connectMethod(source, function(...)
-			for _, module in modules do
+			for key, module in modules :: { [any]: any } do
 				local fn = module[methodName]
 				if type(fn) == 'function' then
+					local actualName = getModuleName(module, key)
 					local useSelf = shouldInjectSelf(module)
-					if useSelf then
-						task.spawn(fn, module, ...)
-					else
-						task.spawn(fn, ...)
-					end
+					task.spawn(function(...)
+						debug.setmemorycategory(actualName)
+						if useSelf then
+							fn(module, ...)
+						else
+							fn(...)
+						end
+					end, ...)
 				end
 			end
 		end)
