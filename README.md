@@ -4,15 +4,11 @@ A lightweight and unopinionated lifecycle manager for Roblox. Find and load modu
 
 ## Features
 
-**Zero Boilerplate:** Load entire folders of modules and connect them to events in three lines of code.
-
-**Safe Booting:** Syntax errors or crashing functions in one module won't stop the rest of your game from loading.
-
-**Deterministic Order:** Use `loadSequence` or `getSorted` to guarantee order of operations.
-
-**Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and RunService events.
-
-**RunService Integration:** Binds directly to RunService events, fully supporting native priorities and frequencies.
+* **Zero Boilerplate:** Load entire folders of modules and connect them to events in three lines of code.
+* **Safe Booting:** Syntax errors or crashing functions in one module won't stop the rest of your game from loading.
+* **Deterministic Order:** Use `loadSequence` or `getSorted` to guarantee strict order.
+* **Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and RunService loop.
+* **RunService Integration:** Binds directly to RunService events, fully supporting native priorities and frequencies.
 
 ## Installation
 
@@ -29,9 +25,9 @@ ldgerrits/bootstrapper@^1.0.0
 ### 1. Find & Load Modules
 Discover your modules and determine how they handle self injection.
 ```lua
-local Bootstrapper = require(path.to.Bootstrapper)
+local Bootstrapper = require(ReplicatedStorage.Packages.Bootstrapper)
 
-local services, loadErrors = Bootstrapper.loadDescendants(script.Parent.Services, {
+local success, services, errors = Bootstrapper.loadDescendants(ReplicatedStorage.Shared.Services, {
     predicate = Bootstrapper.matchesName("Service$"),
     self = true -- Default
 })
@@ -55,12 +51,12 @@ Route engine and game events directly to your module methods.
 -- Hook into RunService
 local cleanupHeartbeat = Bootstrapper.heartbeat(services, "onHeartbeat")
 
--- Bind to a standard Roblox Signal
-local cleanupPlayerAdded = Bootstrapper.bind(services, Players.PlayerAdded, "onPlayerJoined")
+-- Only modules with 'onStateChanged' will connect to GameState.Changed
+local cleanupStateChanged = Bootstrapper.bind(services, GameState.Changed, "onStateChanged")
 
--- Later, safely disconnect everything (e.g., when a round ends)
+-- Later, safely disconnect everything
 cleanupHeartbeat()
-cleanupPlayerAdded()
+cleanupStateChanged()
 ```
 
 ## API
@@ -68,32 +64,29 @@ cleanupPlayerAdded()
 ### Discovery
 
 `Bootstrapper.matchesName(matchName: string) -> Predicate`
-Creates a name-matching filter to be used as predicate in options.
+Creates a name-matching filter.
 
-`Bootstrapper.loadChildren(parent: Instance, options: { predicate: Predicate?, self: boolean? }? ) -> Modules`
-Requires all direct child ModuleScripts. Use `{ self = false }` in options to treat them as static modules.
+`Bootstrapper.loadChildren(parent: Instance, options: Options?) -> (boolean, Modules, {[ModuleScript]: string})`
+Requires direct child ModuleScripts. Returns a success boolean, the loaded modules, and a map of errors.
 
-`Bootstrapper.loadDescendants(parent: Instance, options: { predicate: Predicate?, self: boolean? }? ) -> Modules`
-Recursively requires all descendant ModuleScripts. Use `{ self = false }` to treat them as static modules.
+`Bootstrapper.loadDescendants(parent: Instance, options: Options?) -> (boolean, Modules, {[ModuleScript]: string})`
+Recursively requires all descendant ModuleScripts.
 
-`Bootstrapper.loadSequence(parent: Instance?, sequence: {string | ModuleScript}, options: Options?) -> (Modules, {[ModuleScript]: string})`
-Requires specific modules in a guaranteed execution order. Returns an ordered array of successful modules and a map of errors.
+`Bootstrapper.loadSequence(sequence: {ModuleScript}, options: Options?) -> (boolean, Modules, {[ModuleScript]: string})`
+Requires modules in a guaranteed execution order.
 
 `Bootstrapper.getSorted(modules: Modules, sortFunction: function?) -> {any}`
-Converts a module dictionary into a deterministic array. Defaults to alphabetical sort by module name.
-
-`Bootstrapper.combine(...: Modules) -> Modules`
-Merges multiple module collections into one.
+Converts a dictionary into an alphabetically sorted array.
 
 ---
 
 ### Execution
 
-`Bootstrapper.callSync(modules: Modules, methodName: string, ...any) -> (Modules, {[any]: string})`
-*Yields.* Invokes the method concurrently on all modules and yields the calling thread until all have finished. Returns a table of successful modules and a map of modules that crashed. Supports varargs.
+`Bootstrapper.callSync(modules: Modules, methodName: string, ...any) -> (boolean, Modules, {[any]: string})`
+*Yields.* Invokes the method concurrently and yields until finished. Returns a success boolean, the surviving modules, and a crash map.
 
 `Bootstrapper.callAsync(modules: Modules, methodName: string, ...any): ()`
-Invokes the method on all modules asynchronously via `task.spawn`. Supports varargs.
+Invokes the method concurrently and asynchronously via `task.spawn`.
 
 ---
 
@@ -120,6 +113,3 @@ Binds to `RunService.PreAnimation`.
 
 `Bootstrapper.preRender(modules: Modules, methodName: string, priority: number?): Cleanup`
 Binds to `RunService.PreRender`. Uses `BindToRenderStep` if priority is provided.
-
-`Bootstrapper.stepped(modules: Modules, methodName: string): Cleanup`
-Binds to `RunService.Stepped`.

@@ -176,7 +176,7 @@ end
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
 	@param options { predicate: Predicate?, self: boolean? }? -- Options for filtering and self-injection.
-	@return Modules, {[ModuleScript]: string} -- (Successful Modules, Failed Scripts)
+	@return boolean, Modules, {[ModuleScript]: string} -- (Success, Successful Modules, Failed Scripts)
 ]=]
 function Bootstrapper.loadChildren(
 	parent: Instance,
@@ -184,8 +184,8 @@ function Bootstrapper.loadChildren(
 		predicate: Predicate?,
 		self: boolean?,
 	}?
-): (Modules, { [ModuleScript]: string })
-	local modules = {}
+): (boolean, Modules, { [ModuleScript]: string })
+	local modules: { [string]: any } = {}
 	local failed: { [ModuleScript]: string } = {}
 
 	local predicate = if options then options.predicate else nil
@@ -211,7 +211,7 @@ function Bootstrapper.loadChildren(
 		end
 	end
 
-	return modules, failed
+	return next(failed) == nil, modules, failed
 end
 
 --[=[
@@ -220,7 +220,7 @@ end
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
 	@param options { predicate: Predicate?, self: boolean? }? -- Options for filtering and self-injection.
-	@return Modules, {[ModuleScript]: string} -- (Successful Modules, Failed Scripts)
+	@return boolean, Modules, {[ModuleScript]: string} -- (Success, Successful Modules, Failed Scripts)
 ]=]
 function Bootstrapper.loadDescendants(
 	parent: Instance,
@@ -228,8 +228,8 @@ function Bootstrapper.loadDescendants(
 		predicate: Predicate?,
 		self: boolean?,
 	}?
-): (Modules, { [ModuleScript]: string })
-	local modules = {}
+): (boolean, Modules, { [ModuleScript]: string })
+	local modules: { [string]: any } = {}
 	local failed: { [ModuleScript]: string } = {}
 
 	local predicate = if options then options.predicate else nil
@@ -255,57 +255,46 @@ function Bootstrapper.loadDescendants(
 		end
 	end
 
-	return modules, failed
+	return next(failed) == nil, modules, failed
 end
 
 --[=[
-	Requires specific modules in a guaranteed order.
-	@function loadSequence
-	@within Bootstrapper
-	@param parent Instance -- The Instance to search within.
-	@param sequence -- Array of ModuleScripts or strings.
-	@param options { predicate: Predicate?, self: boolean? }? -- Options for filtering and self-injection.
-	@return {any}, {[ModuleScript]: string} -- (Ordered Modules, Failed Scripts)
+    Requires specific modules in a guaranteed order.
+    @function loadSequence
+    @within Bootstrapper
+    @param sequence {ModuleScript} -- Array of ModuleScripts.
+    @param options { self: boolean? }? -- Options for self-injection.
+    @return boolean, Modules, {[ModuleScript]: string} -- (Success, Ordered Modules, Failed Scripts)
 ]=]
 function Bootstrapper.loadSequence(
-	parent: Instance,
-	sequence: { string | ModuleScript },
+	sequence: { ModuleScript },
 	options: {
-		predicate: Predicate?,
 		self: boolean?,
 	}?
-): ({ any }, { [ModuleScript]: string })
-	local modules = {}
+): (boolean, Modules, { [ModuleScript]: string })
+	local modules: { any } = {}
 	local failed: { [ModuleScript]: string } = {}
 	local shouldInject = not options or options.self ~= false
 
-	for _, item in sequence do
-		local child: ModuleScript?
-
-		if typeof(item) == 'Instance' and item:IsA('ModuleScript') then
-			child = item
-		elseif type(item) == 'string' and parent then
-			child = parent:FindFirstChild(item) :: ModuleScript
-		end
-
-		if child then
-			local success, req = pcall(require, child)
+	for _, scriptInstance in sequence do
+		if typeof(scriptInstance) == 'Instance' and scriptInstance:IsA('ModuleScript') then
+			local success, req = pcall(require, scriptInstance)
 			if success then
 				if type(req) == 'table' then
 					injectSelfRegistry[req] = shouldInject
-					moduleNameRegistry[req] = child.Name
+					moduleNameRegistry[req] = scriptInstance.Name
 				end
 				table.insert(modules, req)
 			else
-				failed[child] = tostring(req)
-				nonFatalError("Sequence failed to load '%s':\n%s", nil, child.Name, tostring(req))
+				failed[scriptInstance] = tostring(req)
+				nonFatalError("Sequence failed to load '%s':\n%s", nil, scriptInstance.Name, tostring(req))
 			end
 		else
-			nonFatalError('Sequence could not find module: %s', nil, tostring(item))
+			nonFatalError('Sequence item is not a ModuleScript: %s', nil, tostring(scriptInstance))
 		end
 	end
 
-	return modules, failed
+	return next(failed) == nil, modules, failed
 end
 
 --[=[
@@ -338,55 +327,17 @@ function Bootstrapper.getSorted(modules: Modules, sortFunction: ((a: string, b: 
 end
 
 --[=[
-	Combines multiple module collections into a single collection.
-	If all inputs are arrays, the result is an array. If any are dictionaries, the result is a dictionary.
-	@function combine
-	@within Bootstrapper
-	@param ... Modules -- Variadic list of module collections to merge.
-	@return Modules -- The merged collection.
-]=]
-function Bootstrapper.combine(...: Modules): Modules
-	local args = { ... }
-	local isAllArray = true
-
-	for _, collection in args do
-		if not (collection :: any)[1] and next(collection :: any) ~= nil then
-			isAllArray = false
-			break
-		end
-	end
-
-	if isAllArray then
-		local result = {}
-		for _, collection in args do
-			for _, module in collection :: { any } do
-				table.insert(result, module)
-			end
-		end
-		return result
-	else
-		local result: { [string]: any } = {}
-		for _, collection in args do
-			for key, module in collection :: { [any]: any } do
-				result[tostring(key)] = module
-			end
-		end
-		return result
-	end
-end
-
---[=[
 	Executes a method on all modules and yields the calling thread until all modules have finished.
-	Returns (passed, failed) where passed matches the input structure (Array or Map).
+	Returns a success boolean, the surviving modules, and a map of crash errors.
 	@yields
 	@function callSync
 	@within Bootstrapper
 	@param modules Modules -- The dictionary or array of loaded modules.
 	@param methodName string -- The name of the function to call on the modules.
 	@param ... any -- Additional arguments to pass to the method.
-	@return Modules, {[any]: string} -- (Successful Modules, Failure Map)
+	@return boolean, Modules, {[any]: string} -- (Success, Successful Modules, Failure Map)
 ]=]
-function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): (Modules, { [any]: string })
+function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): (boolean, Modules, { [any]: string })
 	local mainThread = coroutine.running()
 	local total, done = 0, 0
 
@@ -403,7 +354,7 @@ function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): 
 	end
 
 	if total == 0 then
-		return passed, failed
+		return true, passed :: Modules, failed
 	end
 
 	for key, module in iterModules do
@@ -445,7 +396,8 @@ function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): 
 	end
 
 	coroutine.yield()
-	return passed, failed
+
+	return next(failed) == nil, passed :: Modules, failed
 end
 
 --[=[
@@ -609,18 +561,6 @@ end
 ]=]
 function Bootstrapper.preRender(modules: Modules, methodName: string, priority: number?): Cleanup
 	return bindToRunService(modules, 'PreRender', methodName, priority)
-end
-
---[=[
-	Hooks a specified method in all modules to `RunService.Stepped` (Legacy).
-	@function stepped
-	@within Bootstrapper
-	@param modules Modules
-	@param methodName string
-	@return Cleanup
-]=]
-function Bootstrapper.stepped(modules: Modules, methodName: string): Cleanup
-	return bindToRunService(modules, 'Stepped', methodName)
 end
 
 return Bootstrapper
