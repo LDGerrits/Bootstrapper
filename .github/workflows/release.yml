@@ -23,7 +23,7 @@ jobs:
         run: rokit install --no-trust-check
 
       - name: Build Model
-        run: rojo build -o bootstrapper.rbxm
+        run: rokit run rojo build -o bootstrapper.rbxm
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
