@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # Bootstrapper
 
 A lightweight bootstrapper for Roblox. Find modules, ensure predictable execution order, and route RunService events with memory profiling included.
@@ -21,15 +25,22 @@ ldgerrits/bootstrapper@^1.0.1
 
 ## Usage
 
-### 1. Find & Load Modules
+### 1. Predictable Initialization
 Load your modules and determine whether Bootstrapper should inject `self`.
 ```lua
 local Bootstrapper = require(ReplicatedStorage.Packages.Bootstrapper)
 
-local success, services, errors = Bootstrapper.loadDescendants(ReplicatedStorage.Shared.Services, {
-    predicate = Bootstrapper.matchesName("Service$"),
-    self = true -- Default
+local coreSuccess, coreServices = Bootstrapper.loadSequence({
+    Server.Services.DataService,
+    Server.Services.NetworkService,
+    Server.Services.DatabaseService,
 })
+
+-- Load the rest of your modules in bulk
+local _, featureServices = Bootstrapper.loadDescendants(Server.Features)
+
+-- Ensure the modules always initialize alphabetically if you do not add a  .
+local sortedFeatures = Bootstrapper.sort(featureServices)
 ```
 
 ### 2. Lifecycles

@@ -27,8 +27,9 @@ export type Task =
 
 --[=[
 	@class Bootstrapper
-	A lightweight and unopinionated lifecycle manager for Roblox. 
-	Find and load modules, run their functions, and bind them to RunService events.
+	A lightweight bootstrapper for Roblox. 
+	Find modules, ensure predictable execution order, 
+	and route RunService events with memory profiling included.
 ]=]
 local Bootstrapper = {}
 
@@ -172,6 +173,7 @@ end
 
 --[=[
 	Requires all direct child ModuleScripts within a given parent.
+	@yields
 	@function loadChildren
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
@@ -216,6 +218,7 @@ end
 
 --[=[
 	Requires all descendant ModuleScripts within a given parent.
+	@yields
 	@function loadDescendants
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
@@ -259,12 +262,13 @@ function Bootstrapper.loadDescendants(
 end
 
 --[=[
-    Requires specific modules in a guaranteed order.
-    @function loadSequence
-    @within Bootstrapper
-    @param sequence {ModuleScript} -- Array of ModuleScripts.
-    @param options { self: boolean? }? -- Options for self-injection.
-    @return boolean, Modules, {[ModuleScript]: string} -- (Success, Ordered Modules, Failed Scripts)
+	Requires specific modules in a guaranteed order.
+	@yields
+	@function loadSequence
+	@within Bootstrapper
+	@param sequence {ModuleScript} -- Array of ModuleScripts.
+	@param options { self: boolean? }? -- Options for self-injection.
+	@return boolean, Modules, {[ModuleScript]: string} -- (Success, Ordered Modules, Failed Scripts)
 ]=]
 function Bootstrapper.loadSequence(
 	sequence: { ModuleScript },
@@ -298,32 +302,26 @@ function Bootstrapper.loadSequence(
 end
 
 --[=[
-	Converts a module dictionary into a deterministic array.
-	If no sort function is provided, it defaults to alphabetical by module name.
-	@function getSorted
+	Converts a module collection into a deterministic array.
+	Defaults to alphabetical sorting by module name if no sortFunction is provided.
+	@function sort
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of modules to sort.
-	@param sortFunction ((a: string, b: string) -> boolean)? -- Optional custom sort function.
-	@return {any} -- An array of modules sorted deterministically.
+	@param modules Modules -- The collection to sort.
+	@param sortFunction ((a: any, b: any) -> boolean)? -- Optional custom comparator.
+	@return {any} -- Sorted array of modules.
 ]=]
-function Bootstrapper.getSorted(modules: Modules, sortFunction: ((a: string, b: string) -> boolean)?): { any }
-	local iterModules = modules :: { [string]: any }
-	local keys = {}
+function Bootstrapper.sort(modules: Modules, sortFunction: ((a: any, b: any) -> boolean)?): { any }
+	local result = {}
 
-	for name in iterModules do
-		table.insert(keys, name)
+	for _, module in modules :: { [any]: any } do
+		table.insert(result, module)
 	end
 
-	table.sort(keys, sortFunction or function(a, b)
-		return a < b
+	table.sort(result, sortFunction or function(a, b)
+		return getModuleName(a, '') < getModuleName(b, '')
 	end)
 
-	local sorted = {}
-	for _, name in keys do
-		table.insert(sorted, iterModules[name])
-	end
-
-	return sorted
+	return result
 end
 
 --[=[
