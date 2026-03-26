@@ -338,11 +338,11 @@ end
 function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): (boolean, Modules, { [any]: string })
 	local mainThread = coroutine.running()
 	local total, done = 0, 0
+	local isYielded = false
 
 	local iterModules = modules :: { [any]: any }
 	local passed: any = {}
 	local failed: { [any]: string } = {}
-
 	local isArray = (modules :: any)[1] ~= nil
 
 	for _, module in iterModules do
@@ -386,14 +386,20 @@ function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): 
 				end
 
 				done += 1
+
 				if done == total then
-					task.spawn(mainThread)
+					if isYielded then
+						task.spawn(mainThread)
+					end
 				end
 			end, ...)
 		end
 	end
 
-	coroutine.yield()
+	if done < total then
+		isYielded = true
+		coroutine.yield()
+	end
 
 	return next(failed) == nil, passed :: Modules, failed
 end

@@ -16,7 +16,7 @@ A lightweight bootstrapper for Roblox. Find modules, ensure predictable executio
 The package name + version is
 
 ```
-ldgerrits/bootstrapper@^1.0.1
+ldgerrits/bootstrapper@^1.0.11
 ```
 
 ## Usage
