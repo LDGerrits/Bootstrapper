@@ -4,10 +4,7 @@
 
 local RunService = game:GetService('RunService')
 
-local injectSelfRegistry = setmetatable({}, { __mode = 'k' })
-
 export type Modules = { [string]: any }
-
 export type Predicate = (module: ModuleScript) -> boolean
 
 export type Signal =
@@ -16,7 +13,6 @@ export type Signal =
 	| RBXScriptSignal
 
 export type EventSource = Signal | ((callback: (...any) -> ()) -> Task)
-
 export type Cleanup = () -> ()
 
 export type Task =
@@ -29,7 +25,13 @@ export type Task =
 	| { Disconnect: (unknown) -> () }
 	| { Task }
 
+--[=[
+	@class Bootstrapper
+	A lightweight, zero-dependency utility for discovering modules, managing lifecycles, and natively binding to events/loops.
+]=]
 local Bootstrapper = {}
+
+local injectSelfRegistry = setmetatable({}, { __mode = 'k' })
 
 local function shouldInjectSelf(module: any): boolean
 	local registered = injectSelfRegistry[module]
@@ -39,10 +41,97 @@ local function shouldInjectSelf(module: any): boolean
 	return true
 end
 
+local function doCleanup(task: Task): ()
+	if typeof(task) == 'Instance' then
+		task:Destroy()
+	elseif typeof(task) == 'RBXScriptConnection' then
+		task:Disconnect()
+	elseif typeof(task) == 'function' then
+		task()
+	elseif typeof(task) == 'table' then
+		local taskTable = (task :: any) :: {
+			Destroy: (...unknown) -> ...unknown?,
+			destroy: (...unknown) -> ...unknown?,
+			Disconnect: (...unknown) -> ...unknown?,
+			disconnect: (...unknown) -> ...unknown?,
+		}
+
+		if typeof(taskTable.destroy) == 'function' then
+			local t = (taskTable :: any) :: { destroy: (...unknown) -> ...unknown }
+			t:destroy()
+		elseif typeof(taskTable.Destroy) == 'function' then
+			local t = (taskTable :: any) :: { Destroy: (...unknown) -> ...unknown }
+			t:Destroy()
+		elseif typeof(taskTable.Disconnect) == 'function' then
+			local t = (taskTable :: any) :: { Disconnect: (...unknown) -> ...unknown }
+			t:Disconnect()
+		elseif typeof(taskTable.disconnect) == 'function' then
+			local t = (taskTable :: any) :: { disconnect: (...unknown) -> ...unknown }
+			t:disconnect()
+		end
+	end
+end
+
+local function bindToRunService(
+	modules: Modules,
+	eventName: string,
+	methodName: string,
+	override: (number | EnumItem)?
+): Cleanup
+	local tasks: { Task } = {}
+
+	for name, module in modules do
+		local method = module[methodName]
+		if type(method) ~= 'function' then
+			continue
+		end
+
+		local function run(...)
+			local useSelf = shouldInjectSelf(module)
+			if useSelf then
+				method(module, ...)
+			else
+				method(...)
+			end
+		end
+
+		if (eventName == 'RenderStepped' or eventName == 'PreRender') and RunService:IsClient() then
+			if type(override) == 'number' then
+				local bindName = `{name}_{methodName}`
+				RunService:BindToRenderStep(bindName, override, run)
+				table.insert(tasks, function()
+					RunService:UnbindFromRenderStep(bindName)
+				end)
+			else
+				table.insert(tasks, RunService.PreRender:Connect(run))
+			end
+		elseif eventName == 'PreSimulation' and RunService.BindToSimulation then
+			if typeof(override) == 'EnumItem' and (override :: EnumItem).EnumType == Enum.StepFrequency then
+				table.insert(tasks, (RunService :: any):BindToSimulation(run, override))
+			else
+				table.insert(tasks, RunService.PreSimulation:Connect(run))
+			end
+		else
+			local event = (RunService :: any)[eventName]
+			if event then
+				table.insert(tasks, event:Connect(run))
+			end
+		end
+	end
+
+	return function()
+		for _, task in tasks do
+			doCleanup(task)
+		end
+	end
+end
+
 --[=[
 	Creates a predicate function that matches a module's name against a string.
-	@param matchName The string pattern to match against the module's name.
-	@return A predicate function that can be passed to loadDescendants.
+	@function matchesName
+	@within Bootstrapper
+	@param matchName string -- The string pattern to match against the module's name.
+	@return Predicate
 ]=]
 function Bootstrapper.matchesName(matchName: string): Predicate
 	return function(moduleScript: ModuleScript)
@@ -54,14 +143,20 @@ end
 	Requires all direct child ModuleScripts within a given parent.
 	@function loadChildren
 	@within Bootstrapper
-	@param parent The Instance to search within.
-	@param predicate An optional function to filter which modules are loaded.
-	@param useSelf If true (default), methods on these modules will be passed 'self'.
-	@return A dictionary map of module names to their required return values.
+	@param parent Instance -- The Instance to search within.
+	@param options { predicate: Predicate?, useSelf: boolean? }? -- Options for filtering and self-injection.
+	@return Modules
 ]=]
-function Bootstrapper.loadChildren(parent: Instance, predicate: Predicate?, useSelf: boolean?): Modules
+function Bootstrapper.loadChildren(
+	parent: Instance,
+	options: {
+		predicate: Predicate?,
+		self: boolean?,
+	}?
+): Modules
 	local modules = {}
-	local shouldInject = useSelf ~= false
+	local predicate = if options then options.predicate else nil
+	local shouldInject = not options or options.self ~= false
 
 	for _, child in parent:GetChildren() do
 		if child:IsA('ModuleScript') then
@@ -82,14 +177,20 @@ end
 	Requires all descendant ModuleScripts within a given parent.
 	@function loadDescendants
 	@within Bootstrapper
-	@param parent The Instance to search within.
-	@param predicate An optional function to filter which modules are loaded.
-	@param useSelf boolean? -- If true (default), methods on these modules will be passed 'self'.
-	@return A dictionary map of module names to their required return values.
+	@param parent Instance -- The Instance to search within.
+	@param options { predicate: Predicate?, useSelf: boolean? }? -- Options for filtering and self-injection.
+	@return Modules
 ]=]
-function Bootstrapper.loadDescendants(parent: Instance, predicate: Predicate?, useSelf: boolean?): Modules
+function Bootstrapper.loadDescendants(
+	parent: Instance,
+	options: {
+		predicate: Predicate?,
+		self: boolean?,
+	}?
+): Modules
 	local modules = {}
-	local shouldInject = useSelf ~= false
+	local predicate = if options then options.predicate else nil
+	local shouldInject = not options or options.self ~= false
 
 	for _, descendant in parent:GetDescendants() do
 		if descendant:IsA('ModuleScript') then
@@ -108,7 +209,6 @@ end
 
 --[=[
 	Executes a method on all modules and yields the calling thread until all modules have finished.
-	
 	@yields
 	@function callSync
 	@within Bootstrapper
@@ -127,7 +227,7 @@ function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): 
 	end
 
 	if total == 0 then
-		return
+		return 0, 0
 	end
 
 	for name, module in modules do
@@ -135,28 +235,34 @@ function Bootstrapper.callSync(modules: Modules, methodName: string, ...: any): 
 		if type(fn) == 'function' then
 			local useSelf = shouldInjectSelf(module)
 
-			local function wrapper(...)
+			task.spawn(function(...)
 				debug.setmemorycategory(name)
-				if useSelf then
-					fn(module, ...)
-				else
-					fn(...)
+
+				local success, err = xpcall(function(...)
+					if useSelf then
+						fn(module, ...)
+					else
+						fn(...)
+					end
+				end, debug.traceback, ...)
+
+				if not success then
+					warn(`[Bootstrapper] Error in {name}:{methodName} - {err}`)
 				end
 
 				done += 1
 				if done == total then
 					task.spawn(mainThread)
 				end
-			end
-			task.spawn(wrapper, ...)
+			end, ...)
 		end
 	end
+
 	coroutine.yield()
 end
 
 --[=[
 	Executes a method on all modules asynchronously using `task.spawn` (Fire and forget).
-	
 	@function callAsync
 	@within Bootstrapper
 	@param modules Modules -- The dictionary of loaded modules.
@@ -168,6 +274,7 @@ function Bootstrapper.callAsync(modules: Modules, methodName: string, ...: any):
 		local fn = module[methodName]
 		if type(fn) == 'function' then
 			local useSelf = shouldInjectSelf(module)
+
 			local function wrapper(...)
 				debug.setmemorycategory(name)
 				if useSelf then
@@ -181,40 +288,8 @@ function Bootstrapper.callAsync(modules: Modules, methodName: string, ...: any):
 	end
 end
 
-local function doCleanup(task: Task): ()
-	if typeof(task) == 'Instance' then
-		task:Destroy()
-	elseif typeof(task) == 'RBXScriptConnection' then
-		task:Disconnect()
-	elseif typeof(task) == 'function' then
-		task()
-	elseif typeof(task) == 'table' then
-		local task = (task :: any) :: {
-			Destroy: (...unknown) -> ...unknown?,
-			destroy: (...unknown) -> ...unknown?,
-			Disconnect: (...unknown) -> ...unknown?,
-			disconnect: (...unknown) -> ...unknown?,
-		}
-
-		if typeof(task.destroy) == 'function' then
-			local task = (task :: any) :: { destroy: (...unknown) -> ...unknown }
-			task:destroy()
-		elseif typeof(task.Destroy) == 'function' then
-			local task = (task :: any) :: { Destroy: (...unknown) -> ...unknown }
-			task:Destroy()
-		elseif typeof(task.Disconnect) == 'function' then
-			local task = (task :: any) :: { Disconnect: (...unknown) -> ...unknown }
-			task:Disconnect()
-		elseif typeof(task.disconnect) == 'function' then
-			local task = (task :: any) :: { disconnect: (...unknown) -> ...unknown }
-			task:disconnect()
-		end
-	end
-end
-
 --[=[
 	Binds a method across all modules to a Signal, Custom Signal, or Callback Subscription.
-	
 	@function bind
 	@within Bootstrapper
 	@param modules Modules -- The dictionary of loaded modules.
@@ -265,73 +340,13 @@ function Bootstrapper.bind(modules: Modules, source: EventSource, methodName: st
 	end
 end
 
-local function bindToRunService(modules: Modules, eventName: string, methodName: string): () -> ()
-	local tasks: { Task } = {}
-
-	for name, module in modules do
-		local method = module[methodName]
-		if type(method) ~= 'function' then
-			continue
-		end
-
-		local function run(...)
-			local useSelf = shouldInjectSelf(module)
-			if useSelf then
-				method(module, ...)
-			else
-				method(...)
-			end
-		end
-
-		if (eventName == 'RenderStepped' or eventName == 'PreRender') and RunService:IsClient() then
-			local priority = module[`{methodName}Priority`]
-				or module.Priority
-				or module.priority
-				or module.RenderPriority
-				or module.renderPriority
-			if type(priority) == 'number' then
-				local bindName = `{name}_{methodName}`
-				RunService:BindToRenderStep(bindName, priority, run)
-				table.insert(tasks, function()
-					RunService:UnbindFromRenderStep(bindName)
-				end)
-			else
-				table.insert(tasks, RunService.PreRender:Connect(run))
-			end
-		elseif eventName == 'PreSimulation' and RunService.BindToSimulation then
-			local freq = module[`{methodName}Frequency`]
-				or module.Frequency
-				or module.frequency
-				or module.StepFrequency
-				or module.stepFrequency
-			if typeof(freq) == 'EnumItem' and (freq :: EnumItem).EnumType == Enum.StepFrequency then
-				table.insert(tasks, (RunService :: any):BindToSimulation(run, freq))
-			else
-				table.insert(tasks, RunService.PreSimulation:Connect(run))
-			end
-		else
-			local event = (RunService :: any)[eventName]
-			if event then
-				table.insert(tasks, event:Connect(run))
-			end
-		end
-	end
-
-	return function()
-		for _, task in tasks do
-			doCleanup(task)
-		end
-	end
-end
-
 --[=[
 	Hooks a specified method in all modules to `RunService.Heartbeat`.
-	
 	@function heartbeat
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of loaded modules.
-	@param methodName string -- The method to execute every Heartbeat frame.
-	@return Cleanup -- A function to disconnect the bound loops.
+	@param modules Modules
+	@param methodName string
+	@return Cleanup
 ]=]
 function Bootstrapper.heartbeat(modules: Modules, methodName: string): Cleanup
 	return bindToRunService(modules, 'Heartbeat', methodName)
@@ -339,40 +354,37 @@ end
 
 --[=[
 	Hooks a specified method in all modules to `RunService.RenderStepped` (Client-side only).
-	Searches for `{methodName}Priority` or `Priority` on the module to use with `BindToRenderStep`.
-	
 	@function renderStepped
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of loaded modules.
-	@param methodName string -- The method to execute prior to frame render.
-	@return Cleanup -- A function to unbind/disconnect the bound loops.
+	@param modules Modules
+	@param methodName string
+	@param priority number?
+	@return Cleanup
 ]=]
-function Bootstrapper.renderStepped(modules: Modules, methodName: string): Cleanup
-	return bindToRunService(modules, 'RenderStepped', methodName)
+function Bootstrapper.renderStepped(modules: Modules, methodName: string, priority: number?): Cleanup
+	return bindToRunService(modules, 'RenderStepped', methodName, priority)
 end
 
 --[=[
 	Hooks a specified method in all modules to `RunService.PreSimulation`. 
-	Searches for `{methodName}Frequency` or `Frequency` (`Enum.StepFrequency`) on the module to use with `BindToSimulation`.
-	
 	@function preSimulation
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of loaded modules.
-	@param methodName string -- The method to execute prior to physics simulation.
-	@return Cleanup -- A function to disconnect the bound loops.
+	@param modules Modules
+	@param methodName string
+	@param frequency Enum.StepFrequency?
+	@return Cleanup
 ]=]
-function Bootstrapper.preSimulation(modules: Modules, methodName: string): Cleanup
-	return bindToRunService(modules, 'PreSimulation', methodName)
+function Bootstrapper.preSimulation(modules: Modules, methodName: string, frequency: Enum.StepFrequency?): Cleanup
+	return bindToRunService(modules, 'PreSimulation', methodName, frequency)
 end
 
 --[=[
 	Hooks a specified method in all modules to `RunService.PostSimulation`.
-	
 	@function postSimulation
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of loaded modules.
-	@param methodName string -- The method to execute after physics simulation.
-	@return Cleanup -- A function to disconnect the bound loops.
+	@param modules Modules
+	@param methodName string
+	@return Cleanup
 ]=]
 function Bootstrapper.postSimulation(modules: Modules, methodName: string): Cleanup
 	return bindToRunService(modules, 'PostSimulation', methodName)
@@ -380,12 +392,11 @@ end
 
 --[=[
 	Hooks a specified method in all modules to `RunService.PreAnimation`.
-	
 	@function preAnimation
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of loaded modules.
-	@param methodName string -- The method to execute prior to animation updates.
-	@return Cleanup -- A function to disconnect the bound loops.
+	@param modules Modules
+	@param methodName string
+	@return Cleanup
 ]=]
 function Bootstrapper.preAnimation(modules: Modules, methodName: string): Cleanup
 	return bindToRunService(modules, 'PreAnimation', methodName)
@@ -393,25 +404,24 @@ end
 
 --[=[
 	Hooks a specified method in all modules to `RunService.PreRender`.
-	
 	@function preRender
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of loaded modules.
-	@param methodName string -- The method to execute prior to rendering.
-	@return Cleanup -- A function to disconnect the bound loops.
+	@param modules Modules
+	@param methodName string
+	@param priority number?
+	@return Cleanup
 ]=]
-function Bootstrapper.preRender(modules: Modules, methodName: string): Cleanup
-	return bindToRunService(modules, 'PreRender', methodName)
+function Bootstrapper.preRender(modules: Modules, methodName: string, priority: number?): Cleanup
+	return bindToRunService(modules, 'PreRender', methodName, priority)
 end
 
 --[=[
 	Hooks a specified method in all modules to `RunService.Stepped` (Legacy).
-	
 	@function stepped
 	@within Bootstrapper
-	@param modules Modules -- The dictionary of loaded modules.
-	@param methodName string -- The method to execute.
-	@return Cleanup -- A function to disconnect the bound loops.
+	@param modules Modules
+	@param methodName string
+	@return Cleanup
 ]=]
 function Bootstrapper.stepped(modules: Modules, methodName: string): Cleanup
 	return bindToRunService(modules, 'Stepped', methodName)
