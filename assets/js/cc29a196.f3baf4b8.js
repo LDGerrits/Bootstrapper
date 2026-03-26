@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkdocs=self.webpackChunkdocs||[]).push([[881],{4410:s=>{s.exports=JSON.parse('{"sourceUrl":"https://github.com/LDgerrits/Bootstrapper/blob/main","baseUrl":"/Bootstrapper/","classOrder":["Bootstrapper"],"apiCategories":[]}')}}]);
