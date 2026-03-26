@@ -1,0 +1,9 @@
+[package]
+name = "ldgerrits/bootstrapper"
+description = "An agnostic bootstrapper"
+version = "1.0.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+license = "MIT"
+exclude = ["**"]
+include = ["src", "src/*", "wally.toml", "default.project.json", "LICENSE.md"]
