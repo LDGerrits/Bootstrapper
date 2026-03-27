@@ -16,7 +16,7 @@ A lightweight, deterministic bootstrapper for Roblox. Find modules, control the 
 Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@^1.0.13
+ldgerrits/bootstrapper@^1.0.14
 ```
 
 ## Usage

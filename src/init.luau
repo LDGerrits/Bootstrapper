@@ -1,4 +1,4 @@
--- Bootstrapper v1.0.13 • LDGerrits
+-- Bootstrapper v1.0.14 • LDGerrits
 --!strict
 --!nolint LocalUnused
 --!nolint LocalShadow
@@ -88,6 +88,11 @@ local function loadModule(module: ModuleScript, modulesArray: { any }, errors: E
 end
 
 local function parseMethodName(methodName: string): (string, boolean)
+	local length = #methodName
+	if length <= 1 then
+		return methodName, true
+	end
+
 	local prefix = string.sub(methodName, 1, 1)
 	if prefix == '.' then
 		return string.sub(methodName, 2), false
@@ -234,7 +239,7 @@ end
 	@function loadChildren
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
-	@param predicate: Predicate? -- Filter
+	@param predicate: Predicate? -- Optional filter to include specific modules (e.g., Bootstrapper.byName("Service$")).
 	@return LoadedModules, Errors? -- (LoadedModules, Errors)
 ]=]
 function Bootstrapper.loadChildren(parent: Instance, predicate: Predicate?): (LoadedModules, Errors?)
@@ -265,7 +270,7 @@ end
 	@function loadDescendants
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
-	@param predicate: Predicate? -- Filter
+	@param predicate: Predicate? -- Optional filter to include specific modules (e.g., Bootstrapper.byName("Service$")).
 	@return LoadedModules, Errors? -- (LoadedModules, Errors)
 ]=]
 function Bootstrapper.loadDescendants(parent: Instance, predicate: Predicate?): (LoadedModules, Errors?)
@@ -295,7 +300,7 @@ end
 	@function loadSequence
 	@within Bootstrapper
 	@param modules ModuleScripts -- Array of ModuleScripts.
-	@param predicate: Predicate? -- Filter
+	@param predicate: Predicate? -- Optional filter to include specific modules (e.g., Bootstrapper.byName("Service$")).
 	@return LoadedModules, Errors? -- (LoadedModules, Errors)
 ]=]
 function Bootstrapper.loadSequence(modules: ModuleScripts, predicate: Predicate?): (LoadedModules, Errors?)
