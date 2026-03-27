@@ -1,4 +1,4 @@
--- Bootstrapper v1.1.0 • LDGerrits
+-- Bootstrapper v1.0.12 • LDGerrits
 --!strict
 --!nolint LocalUnused
 --!nolint LocalShadow
@@ -31,14 +31,6 @@ export type Task =
 	| { disconnect: (unknown) -> () }
 	| { Disconnect: (unknown) -> () }
 	| { Task }
-
---[=[
-	@class Bootstrapper
-	A lightweight bootstrapper for Roblox. 
-	Find modules, ensure predictable execution order, 
-	and route RunService events with memory profiling included.
-]=]
-local Bootstrapper = {}
 
 local function nonFatalError(messageTemplate: string, trace: string?, ...: any)
 	local messageText = string.format(messageTemplate, ...)
@@ -199,13 +191,21 @@ local function bindToRunService(
 end
 
 --[=[
+	@class Bootstrapper
+	A lightweight bootstrapper for Roblox. 
+	Find modules, ensure predictable execution order, 
+	and route RunService events with memory profiling included.
+]=]
+local Bootstrapper = {}
+
+--[=[
 	Creates a predicate function that matches a module's name against a string.
-	@function matchesName
+	@function byName
 	@within Bootstrapper
 	@param matchName string -- The string pattern to match against the module's name.
 	@return Predicate
 ]=]
-function Bootstrapper.matchesName(matchName: string): Predicate
+function Bootstrapper.byName(matchName: string): Predicate
 	return function(moduleScript: ModuleScript)
 		return moduleScript.Name:match(matchName) ~= nil
 	end
@@ -219,9 +219,9 @@ end
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
 	@param predicate: Predicate? -- Filter
-	@return boolean, LoadedModules, Errors -- (Success, LoadedModules, Errors)
+	@return LoadedModules, Errors? -- (LoadedModules, Errors)
 ]=]
-function Bootstrapper.loadChildren(parent: Instance, predicate: Predicate?): (boolean, LoadedModules, Errors)
+function Bootstrapper.loadChildren(parent: Instance, predicate: Predicate?): (LoadedModules, Errors?)
 	local modulesArray, errors = {}, {}
 
 	local scripts = {}
@@ -239,7 +239,7 @@ function Bootstrapper.loadChildren(parent: Instance, predicate: Predicate?): (bo
 		loadModule(moduleScript, modulesArray, errors, predicate)
 	end
 
-	return next(errors) == nil, modulesArray, errors
+	return modulesArray, next(errors) ~= nil and errors or nil
 end
 
 --[=[
@@ -250,9 +250,9 @@ end
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
 	@param predicate: Predicate? -- Filter
-	@return boolean, LoadedModules, Errors -- (Success, LoadedModules, Errors)
+	@return LoadedModules, Errors? -- (LoadedModules, Errors)
 ]=]
-function Bootstrapper.loadDescendants(parent: Instance, predicate: Predicate?): (boolean, LoadedModules, Errors)
+function Bootstrapper.loadDescendants(parent: Instance, predicate: Predicate?): (LoadedModules, Errors?)
 	local modulesArray, errors = {}, {}
 
 	local scripts = {}
@@ -270,7 +270,7 @@ function Bootstrapper.loadDescendants(parent: Instance, predicate: Predicate?): 
 		loadModule(moduleScript, modulesArray, errors, predicate)
 	end
 
-	return next(errors) == nil, modulesArray, errors
+	return modulesArray, next(errors) ~= nil and errors or nil
 end
 
 --[=[
@@ -279,14 +279,15 @@ end
 	@function loadSequence
 	@within Bootstrapper
 	@param modules ModuleScripts -- Array of ModuleScripts.
-	@return boolean, LoadedModules, Errors -- (Success, LoadedModules, Errors)
+	@param predicate: Predicate? -- Filter
+	@return LoadedModules, Errors? -- (LoadedModules, Errors)
 ]=]
-function Bootstrapper.loadSequence(modules: ModuleScripts, predicate: Predicate?): (boolean, LoadedModules, Errors)
+function Bootstrapper.loadSequence(modules: ModuleScripts, predicate: Predicate?): (LoadedModules, Errors?)
 	local modulesArray, errors = {}, {}
 	for _, module in modules do
 		loadModule(module, modulesArray, errors, predicate)
 	end
-	return next(errors) == nil, modulesArray, errors
+	return modulesArray, next(errors) ~= nil and errors or nil
 end
 
 --[=[
@@ -298,18 +299,18 @@ end
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
 	@param methodName string -- The name of the function to call on the modules.
 	@param ... any -- Additional arguments to pass to the method.
-	@return boolean, LoadedModules, Errors -- (Success, LoadedModules, Errors)
+	@return LoadedModules, Errors? -- (LoadedModules, Errors)
 ]=]
 function Bootstrapper.callSync(
 	modules: LoadedModules | ModuleScripts,
 	methodName: string,
 	...: any
-): (boolean, LoadedModules, Errors)
+): (LoadedModules, Errors?)
 	local mainThread = coroutine.running()
 	local total, done = 0, 0
 	local isYielded = false
 
-	local passed: LoadedModules = {}
+	local modulesArray: LoadedModules = {}
 	local errors: Errors = {}
 
 	local batch = {}
@@ -331,7 +332,7 @@ function Bootstrapper.callSync(
 	end
 
 	if total == 0 then
-		return true, passed, errors
+		return modulesArray, next(errors) ~= nil and errors or nil
 	end
 
 	for _, entry in batch do
@@ -345,7 +346,7 @@ function Bootstrapper.callSync(
 			end, ...)
 
 			if success then
-				table.insert(passed, entry.module)
+				table.insert(modulesArray, entry.module)
 			else
 				errors[entry.name] = err.msg
 				nonFatalError('Error in %s:%s()\n%s', err.trace, entry.name, methodName, err.msg)
@@ -366,7 +367,7 @@ function Bootstrapper.callSync(
 		coroutine.yield()
 	end
 
-	return next(errors) == nil, passed, errors
+	return modulesArray, next(errors) ~= nil and errors or nil
 end
 
 --[=[
@@ -406,14 +407,14 @@ end
 
 --[=[
 	Binds a method across all modules to a Signal, Custom Signal, or Callback Subscription.
-	@function bind
+	@function bindTo
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
-	@param event Event -- A Signal or a subscription function.
 	@param methodName string -- The name of the function to trigger.
+	@param event Event -- A Signal or a subscription function.
 	@return Cleanup -- A uniform cleanup function to disconnect the event.
 ]=]
-function Bootstrapper.bind(modules: LoadedModules | ModuleScripts, event: Event, methodName: string): Cleanup
+function Bootstrapper.bindTo(modules: LoadedModules | ModuleScripts, methodName: string, event: Event): Cleanup
 	local tasks: { Task } = {}
 
 	local b_modules = {}
@@ -463,46 +464,49 @@ end
 
 --[=[
 	Hooks a specified method in all modules to `RunService.Heartbeat`.
-	@function heartbeat
+	@function bindToHeartbeat
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
 	@param methodName string -- The name of the function to trigger.
 	@return Cleanup
 ]=]
-function Bootstrapper.heartbeat(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
+function Bootstrapper.bindToHeartbeat(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
 	return bindToRunService(modules, 'Heartbeat', methodName)
 end
 
 --[=[
-	Hooks a specified method in all modules to `RunService.RenderStepped` (Client-side only).
-	@function renderStepped
+	Hooks a specified method in all modules to `RunService.RenderStepped` 
+	or `RunService:BindToRenderStep` if a priority is given.
+	@client
+	@function bindToRenderStep
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
 	@param methodName string -- The name of the function to trigger.
 	@param priority number?
 	@return Cleanup
 ]=]
-function Bootstrapper.renderStepped(
+function Bootstrapper.bindToRenderStep(
 	modules: LoadedModules | ModuleScripts,
 	methodName: string,
 	priority: number?
 ): Cleanup
 	if not RunService:IsClient() then
-		error(`[Bootstrapper] renderStepped can only be called on the Client.`, 3)
+		error(`[Bootstrapper] bindToRenderStep can only be called on the Client.`, 3)
 	end
 	return bindToRunService(modules, 'RenderStepped', methodName, priority)
 end
 
 --[=[
-	Hooks a specified method in all modules to `RunService.PreSimulation`. 
-	@function preSimulation
+	Hooks a specified method in all modules to `RunService.PreSimulation`
+	or `RunService:BindToSimulation` if a frequency is given.
+	@function bindToPreSimulation
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
 	@param methodName string -- The name of the function to trigger.
 	@param frequency Enum.StepFrequency?
 	@return Cleanup
 ]=]
-function Bootstrapper.preSimulation(
+function Bootstrapper.bindToPreSimulation(
 	modules: LoadedModules | ModuleScripts,
 	methodName: string,
 	frequency: Enum.StepFrequency?
@@ -512,39 +516,40 @@ end
 
 --[=[
 	Hooks a specified method in all modules to `RunService.PostSimulation`.
-	@function postSimulation
+	@function bindToPostSimulation
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
 	@param methodName string -- The name of the function to trigger.
 	@return Cleanup
 ]=]
-function Bootstrapper.postSimulation(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
+function Bootstrapper.bindToPostSimulation(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
 	return bindToRunService(modules, 'PostSimulation', methodName)
 end
 
 --[=[
 	Hooks a specified method in all modules to `RunService.PreAnimation`.
-	@function preAnimation
+	@function bindToPreAnimation
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
 	@param methodName string -- The name of the function to trigger.
 	@return Cleanup
 ]=]
-function Bootstrapper.preAnimation(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
+function Bootstrapper.bindToPreAnimation(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
 	return bindToRunService(modules, 'PreAnimation', methodName)
 end
 
 --[=[
-	Hooks a specified method in all modules to `RunService.PreRender` (Client-side only).
-	@function preRender
+	Hooks a specified method in all modules to `RunService.PreRender`.
+	@client
+	@function bindToPreRender
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
 	@param methodName string -- The name of the function to trigger.
 	@return Cleanup
 ]=]
-function Bootstrapper.preRender(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
+function Bootstrapper.bindToPreRender(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
 	if not RunService:IsClient() then
-		error(`[Bootstrapper] preRender can only be called on the Client.`, 3)
+		error(`[Bootstrapper] bindToPreRender can only be called on the Client.`, 3)
 	end
 	return bindToRunService(modules, 'PreRender', methodName)
 end

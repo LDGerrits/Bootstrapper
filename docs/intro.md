@@ -4,67 +4,91 @@ sidebar_position: 1
 
 # Bootstrapper
 
-A lightweight bootstrapper for Roblox. Find modules, ensure predictable execution order, and route RunService events with memory profiling included.
+A lightweight, deterministic bootstrapper for Roblox. Find modules, ensure predictable execution order, and route RunService events with built-in memory profiling.
 
 ## Features
 
-* **Predictable Flow:** Use `loadSequence` or `sort` to guarantee your modules initialize exactly when you expect.
+* **Predictable Flow:** Set a specific execution order for your modules.
 * **Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and RunService loop.
-* **Isolated Startup:** Errors in one module won't stop the rest of your game from loading (unless you want to).
 * **Event Routing:** Connect modules directly to engine events or custom signals with selective binding and uniform cleanup.
 
 ## Installation
 
 ### Wally
 
-The package name + version is
+Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@^1.0.11
+ldgerrits/bootstrapper@^1.0.12
 ```
 
 ## Usage
 
-### 1. Predictable Initialization
-Load your modules and determine whether Bootstrapper should inject `self`.
-```lua
-local Bootstrapper = require(ReplicatedStorage.Packages.Bootstrapper)
+### 1. Finding & Loading Modules
 
-local coreSuccess, coreServices = Bootstrapper.loadSequence({
-    Server.Services.DataService,
-    Server.Services.NetworkService,
-    Server.Services.DatabaseService,
+Load modules from a folder. Bootstrapper automatically requires them and returns a **deterministically sorted array** (alphabetical by Name), ensuring your game starts the same way every time.
+
+```lua
+local Bootstrapper = require(path.to.Bootstrapper)
+
+local services, errors = Bootstrapper.loadDescendants(path.to.Services, Bootstrapper.byName('Service$'))
+```
+
+### 2. Manual Sequences
+
+You can use `loadSequence` to define a strict, custom order using raw ModuleScript references. This sequence can be stored and reused for all lifecycle stages.
+
+```Lua
+local services, errors = Bootstrapper.loadSequence({
+    path.to.DataService,
+    path.to.PlayerService,
+    path.to.AssetService,
 })
 
--- Load the rest of your modules in bulk
-local _, featureServices = Bootstrapper.loadDescendants(Server.Features)
-
--- Ensure the modules always initialize alphabetically if you do not add a  .
-local sortedFeatures = Bootstrapper.sort(featureServices)
+-- Use the resulting services array for everything else
+Bootstrapper.callSync(services, 'init')
+Bootstrapper.bindToHeartbeat(services, 'onHeartbeat')
 ```
 
-### 2. Lifecycles
+### 3. Lazy Resolution
 
-Execute methods across all loaded modules.
+You don't have to call a 'load' function. You can also just pass an array of ModuleScripts directly to events, and the Bootstrapper will handle the require() and memory profiling for you automatically.
+
 ```Lua
--- Block thread until all 'init' methods finish
-Bootstrapper.callSync(services, "init", gameState)
-
--- Fire 'start' methods and move on immediately
-Bootstrapper.callAsync(services, "start")
+-- This works even if the modules haven't been required yet
+Bootstrapper.bindToHeartbeat({
+    path.to.CombatService,
+    path.to.VFXService,
+}, 'onUpdate')
 ```
 
-### 3. Events
+### 4. Lifecycles
 
-Route engine and game events directly to your module methods.
+Trigger methods across your modules. `callSync` yields the current thread until all modules finish, while `callAsync` fires them in background threads.
+
 ```Lua
--- Hook into RunService
-local cleanupHeartbeat = Bootstrapper.heartbeat(services, "onHeartbeat")
+-- Yields until every module's `init` function returns
+-- Only modules that successfully finish 'init' are returned
+local services, errors = Bootstrapper.callSync(services, 'init')
 
--- Only modules with 'onStateChanged' will connect to GameState.Changed
-local cleanupStateChanged = Bootstrapper.bind(services, GameState.Changed, "onStateChanged")
+-- Fire 'start' methods without yielding
+-- You can pass arguments like 'gameData' here!
+Bootstrapper.callAsync(services, 'start', gameData)
+```
 
--- Later, safely disconnect everything
+### 5. Event Binding
+
+Route `RunService` events or signals directly to module methods. All binding functions follow the same signature: `(modules, methodName, [context])`.
+
+```Lua
+local cleanupHeartbeat = Bootstrapper.bindToHeartbeat(services, 'onHeartbeat')
+
+local cleanupRenderStep = Bootstrapper.bindToRenderStep(services, 'onRender', Enum.RenderPriority.Last.Value)
+
+local cleanupGameStateChanged = Bootstrapper.bindTo(services, 'onGameState', GameState.Changed)
+
+-- Disconnect everything when they are no longer needed
 cleanupHeartbeat()
-cleanupStateChanged()
+cleanupRenderStep()
+cleanupGameStateChanged()
 ```
