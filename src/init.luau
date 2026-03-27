@@ -1,8 +1,13 @@
+-- Bootstrapper v1.0.11 • LDGerrits
 --!strict
 --!nolint LocalUnused
 --!nolint LocalShadow
 
 local RunService = game:GetService('RunService')
+
+local batchCounter = 0
+local moduleNameRegistry = setmetatable({}, { __mode = 'k' })
+local injectSelfRegistry = setmetatable({}, { __mode = 'k' })
 
 export type Modules = { [string]: any } | { any }
 export type Predicate = (module: ModuleScript) -> boolean
@@ -12,7 +17,7 @@ export type Signal =
 	| { connect: (any, (...any) -> ...any) -> any }
 	| RBXScriptSignal
 
-export type EventSource = Signal | ((callback: (...any) -> ()) -> Task)
+export type Event = Signal | ((callback: (...any) -> ()) -> Task)
 export type Cleanup = () -> ()
 
 export type Task =
@@ -48,8 +53,6 @@ local function nonFatalError(messageTemplate: string, trace: string?, ...: any)
 	end)
 end
 
-local moduleNameRegistry = setmetatable({}, { __mode = 'k' })
-
 local function getModuleName(module: any, fallbackKey: any): string
 	if type(module) == 'table' then
 		local registeredName = moduleNameRegistry[module]
@@ -59,8 +62,6 @@ local function getModuleName(module: any, fallbackKey: any): string
 	end
 	return tostring(fallbackKey)
 end
-
-local injectSelfRegistry = setmetatable({}, { __mode = 'k' })
 
 local function shouldInjectSelf(module: any): boolean
 	local registered = injectSelfRegistry[module]
@@ -109,45 +110,60 @@ local function bindToRunService(
 ): Cleanup
 	local tasks: { Task } = {}
 
+	local b_modules = {}
+	local b_fns = {}
+	local b_names = {}
+	local b_useSelf = {}
+	local count = 0
+
 	for key, module in modules :: { [any]: any } do
 		local fn = module[methodName]
-		if type(fn) ~= 'function' then
-			continue
+		if type(fn) == 'function' then
+			count += 1
+			b_modules[count] = module
+			b_fns[count] = fn
+			b_names[count] = getModuleName(module, key)
+			b_useSelf[count] = shouldInjectSelf(module)
 		end
+	end
 
-		local actualName = getModuleName(module, key)
+	if count == 0 then
+		return function() end
+	end
 
-		local function run(...)
-			debug.setmemorycategory(actualName)
-			local useSelf = shouldInjectSelf(module)
-			if useSelf then
-				fn(module, ...)
+	local function run(...)
+		for i = 1, count do
+			debug.setmemorycategory(b_names[i])
+
+			if b_useSelf[i] then
+				b_fns[i](b_modules[i], ...)
 			else
-				fn(...)
+				b_fns[i](...)
 			end
 		end
+	end
 
-		if (eventName == 'RenderStepped' or eventName == 'PreRender') and RunService:IsClient() then
-			if type(override) == 'number' then
-				local bindName = `{actualName}_{methodName}`
-				RunService:BindToRenderStep(bindName, override, run)
-				table.insert(tasks, function()
-					RunService:UnbindFromRenderStep(bindName)
-				end)
-			else
-				table.insert(tasks, RunService.PreRender:Connect(run))
-			end
-		elseif eventName == 'PreSimulation' and RunService.BindToSimulation then
-			if typeof(override) == 'EnumItem' and (override :: EnumItem).EnumType == Enum.StepFrequency then
-				table.insert(tasks, (RunService :: any):BindToSimulation(run, override))
-			else
-				table.insert(tasks, RunService.PreSimulation:Connect(run))
-			end
+	if (eventName == 'RenderStepped' or eventName == 'PreRender') and RunService:IsClient() then
+		if type(override) == 'number' then
+			batchCounter += 1
+			local bindName = `Bootstrapper_RenderBatch_{batchCounter}_{methodName}`
+			RunService:BindToRenderStep(bindName, override, run)
+			table.insert(tasks, function()
+				RunService:UnbindFromRenderStep(bindName)
+			end)
 		else
-			local event = (RunService :: any)[eventName]
-			if event then
-				table.insert(tasks, event:Connect(run))
-			end
+			table.insert(tasks, RunService.PreRender:Connect(run))
+		end
+	elseif eventName == 'PreSimulation' and RunService.BindToSimulation then
+		if typeof(override) == 'EnumItem' and (override :: EnumItem).EnumType == Enum.StepFrequency then
+			table.insert(tasks, (RunService :: any):BindToSimulation(run, override))
+		else
+			table.insert(tasks, RunService.PreSimulation:Connect(run))
+		end
+	else
+		local event = (RunService :: any)[eventName]
+		if event then
+			table.insert(tasks, event:Connect(run))
 		end
 	end
 
@@ -437,52 +453,51 @@ end
 	@function bind
 	@within Bootstrapper
 	@param modules Modules -- The dictionary or array of loaded modules.
-	@param source EventSource -- A Signal (e.g., PlayerAdded) or a subscription function.
+	@param event Event -- A Signal or a subscription function.
 	@param methodName string -- The name of the function to trigger.
 	@return Cleanup -- A uniform cleanup function to disconnect the event.
 ]=]
-function Bootstrapper.bind(modules: Modules, source: EventSource, methodName: string): Cleanup
+function Bootstrapper.bind(modules: Modules, event: Event, methodName: string): Cleanup
 	local tasks: { Task } = {}
 
-	if type(source) == 'function' then
-		for key, module in modules :: { [any]: any } do
-			local fn = module[methodName]
-			if type(fn) == 'function' then
-				local actualName = getModuleName(module, key)
-				local taskInstance = source(function(...)
-					local useSelf = shouldInjectSelf(module)
-					task.spawn(function(...)
-						debug.setmemorycategory(actualName)
-						if useSelf then
-							fn(module, ...)
-						else
-							fn(...)
-						end
-					end, ...)
-				end)
-				table.insert(tasks, taskInstance)
+	local b_modules = {}
+	local b_fns = {}
+	local b_names = {}
+	local b_useSelf = {}
+	local count = 0
+
+	for key, module in modules :: { [any]: any } do
+		local fn = module[methodName]
+		if type(fn) == 'function' then
+			count += 1
+			b_modules[count] = module
+			b_fns[count] = fn
+			b_names[count] = getModuleName(module, key)
+			b_useSelf[count] = shouldInjectSelf(module)
+		end
+	end
+
+	if count == 0 then
+		return function() end
+	end
+
+	local function run(...)
+		for i = 1, count do
+			debug.setmemorycategory(b_names[i])
+
+			if b_useSelf[i] then
+				b_fns[i](b_modules[i], ...)
+			else
+				b_fns[i](...)
 			end
 		end
+	end
+
+	if type(event) == 'function' then
+		table.insert(tasks, event(run))
 	else
-		local connectMethod = (source :: any).Connect or (source :: any).connect
-		local connection = connectMethod(source, function(...)
-			for key, module in modules :: { [any]: any } do
-				local fn = module[methodName]
-				if type(fn) == 'function' then
-					local actualName = getModuleName(module, key)
-					local useSelf = shouldInjectSelf(module)
-					task.spawn(function(...)
-						debug.setmemorycategory(actualName)
-						if useSelf then
-							fn(module, ...)
-						else
-							fn(...)
-						end
-					end, ...)
-				end
-			end
-		end)
-		table.insert(tasks, connection)
+		local connectMethod = (event :: any).Connect or (event :: any).connect
+		table.insert(tasks, connectMethod(event, run))
 	end
 
 	return function()
