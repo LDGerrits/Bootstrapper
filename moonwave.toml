@@ -13,12 +13,16 @@ enabled = true
 includeReadme = false
 
 [[home.features]]
-title = "Predictable Order"
-description = "Set a specific execution flow for your modules."
+title = "Predictable Flow"
+description = "Load modules in a deterministically sorted order (alphabetical) or define a sequence manually."
 
 [[home.features]]
 title = "Event Binding"
 description = "Connect modules directly to RunService events or custom signals."
+
+[[home.features]]
+title = "Method Call Syntax"
+description = "Use standard Lua syntax (`.` vs `:`) in your method names to explicitly call static functions or object methods."
 
 [[home.features]]
 title = "Memory Profiling"

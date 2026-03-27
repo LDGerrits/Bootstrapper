@@ -1,4 +1,4 @@
--- Bootstrapper v1.0.12 • LDGerrits
+-- Bootstrapper v1.0.13 • LDGerrits
 --!strict
 --!nolint LocalUnused
 --!nolint LocalShadow
@@ -87,6 +87,17 @@ local function loadModule(module: ModuleScript, modulesArray: { any }, errors: E
 	end
 end
 
+local function parseMethodName(methodName: string): (string, boolean)
+	local prefix = string.sub(methodName, 1, 1)
+	if prefix == '.' then
+		return string.sub(methodName, 2), false
+	elseif prefix == ':' then
+		return string.sub(methodName, 2), true
+	end
+
+	return methodName, true
+end
+
 local function doCleanup(task: Task): ()
 	if typeof(task) == 'Instance' then
 		task:Destroy()
@@ -124,6 +135,7 @@ local function bindToRunService(
 	methodName: string,
 	override: (number | EnumItem)?
 ): Cleanup
+	local queryName, passSelf = parseMethodName(methodName)
 	local tasks: { Task } = {}
 
 	local b_modules = {}
@@ -137,7 +149,7 @@ local function bindToRunService(
 			continue
 		end
 
-		local fn = module[methodName]
+		local fn = module[queryName]
 		if type(fn) == 'function' then
 			count += 1
 			b_modules[count] = module
@@ -153,14 +165,18 @@ local function bindToRunService(
 	local function run(...)
 		for i = 1, count do
 			debug.setmemorycategory(b_names[i])
-			b_fns[i](b_modules[i], ...)
+			if not passSelf then
+				b_fns[i](...)
+			else
+				b_fns[i](b_modules[i], ...)
+			end
 		end
 	end
 
 	if eventName == 'RenderStepped' then
 		if type(override) == 'number' then
 			batchCounter += 1
-			local bindName = `Bootstrapper_RenderBatch_{batchCounter}_{methodName}`
+			local bindName = `Bootstrapper_RenderBatch_{batchCounter}_{queryName}`
 			RunService:BindToRenderStep(bindName, override, run)
 			table.insert(tasks, function()
 				RunService:UnbindFromRenderStep(bindName)
@@ -292,12 +308,12 @@ end
 
 --[=[
 	Executes a method on all modules and yields the calling thread until all modules have finished.
-	Returns a success boolean, the surviving modules array, and a map of crash errors.
+	Returns the succesful modules array, and a map of errors.
 	@yields
 	@function callSync
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
-	@param methodName string -- The name of the function to call on the modules.
+	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param ... any -- Additional arguments to pass to the method.
 	@return LoadedModules, Errors? -- (LoadedModules, Errors)
 ]=]
@@ -310,24 +326,26 @@ function Bootstrapper.callSync(
 	local total, done = 0, 0
 	local isYielded = false
 
+	local queryName, passSelf = parseMethodName(methodName)
 	local modulesArray: LoadedModules = {}
 	local errors: Errors = {}
 
-	local batch = {}
+	local b_modules = {}
+	local b_fns = {}
+	local b_names = {}
+
 	for _, item in modules :: { [any]: any } do
 		local module, actualName = ensureLoaded(item, errors)
 		if type(module) ~= 'table' then
 			continue
 		end
 
-		local fn = module[methodName]
+		local fn = module[queryName]
 		if type(fn) == 'function' then
 			total += 1
-			table.insert(batch, {
-				module = module,
-				fn = fn,
-				name = actualName :: string,
-			})
+			b_modules[total] = module
+			b_fns[total] = fn
+			b_names[total] = actualName :: string
 		end
 	end
 
@@ -335,21 +353,27 @@ function Bootstrapper.callSync(
 		return modulesArray, next(errors) ~= nil and errors or nil
 	end
 
-	for _, entry in batch do
+	local passedByIndex = {}
+
+	for i = 1, total do
 		task.spawn(function(...)
-			debug.setmemorycategory(entry.name)
+			debug.setmemorycategory(b_names[i])
 
 			local success, err = xpcall(function(...)
-				entry.fn(entry.module, ...)
+				if not passSelf then
+					b_fns[i](...)
+				else
+					b_fns[i](b_modules[i], ...)
+				end
 			end, function(e)
 				return { msg = tostring(e), trace = debug.traceback('', 2) }
 			end, ...)
 
 			if success then
-				table.insert(modulesArray, entry.module)
+				passedByIndex[i] = b_modules[i]
 			else
-				errors[entry.name] = err.msg
-				nonFatalError('Error in %s:%s()\n%s', err.trace, entry.name, methodName, err.msg)
+				errors[b_names[i]] = err.msg
+				nonFatalError('Error in %s:%s()\n%s', err.trace, b_names[i], queryName, err.msg)
 			end
 
 			done += 1
@@ -367,6 +391,12 @@ function Bootstrapper.callSync(
 		coroutine.yield()
 	end
 
+	for i = 1, total do
+		if passedByIndex[i] then
+			table.insert(modulesArray, passedByIndex[i])
+		end
+	end
+
 	return modulesArray, next(errors) ~= nil and errors or nil
 end
 
@@ -376,29 +406,35 @@ end
 	@function callAsync
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
-	@param methodName string -- The name of the function to call on the modules.
+	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param ... any -- Additional arguments to pass to the method.
 ]=]
 function Bootstrapper.callAsync(modules: LoadedModules | ModuleScripts, methodName: string, ...: any): ()
+	local queryName, passSelf = parseMethodName(methodName)
+
 	for _, item in modules :: { [any]: any } do
 		local module, actualName = ensureLoaded(item)
 		if type(module) ~= 'table' then
 			continue
 		end
 
-		local fn = module[methodName]
+		local fn = module[queryName]
 		if type(fn) == 'function' then
 			task.spawn(function(...)
 				debug.setmemorycategory(actualName :: string)
 
 				local success, err = xpcall(function(...)
-					fn(module, ...)
+					if not passSelf then
+						fn(...)
+					else
+						fn(module, ...)
+					end
 				end, function(e)
 					return { msg = tostring(e), trace = debug.traceback('', 2) }
 				end, ...)
 
 				if not success then
-					nonFatalError('Error in %s:%s() (Async)\n%s', err.trace, actualName :: string, methodName, err.msg)
+					nonFatalError('Error in %s:%s() (Async)\n%s', err.trace, actualName :: string, queryName, err.msg)
 				end
 			end, ...)
 		end
@@ -410,11 +446,12 @@ end
 	@function bindTo
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
-	@param methodName string -- The name of the function to trigger.
+	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param event Event -- A Signal or a subscription function.
 	@return Cleanup -- A uniform cleanup function to disconnect the event.
 ]=]
 function Bootstrapper.bindTo(modules: LoadedModules | ModuleScripts, methodName: string, event: Event): Cleanup
+	local queryName, passSelf = parseMethodName(methodName)
 	local tasks: { Task } = {}
 
 	local b_modules = {}
@@ -428,7 +465,7 @@ function Bootstrapper.bindTo(modules: LoadedModules | ModuleScripts, methodName:
 			continue
 		end
 
-		local fn = module[methodName]
+		local fn = module[queryName]
 		if type(fn) == 'function' then
 			count += 1
 			b_modules[count] = module
@@ -444,7 +481,11 @@ function Bootstrapper.bindTo(modules: LoadedModules | ModuleScripts, methodName:
 	local function run(...)
 		for i = 1, count do
 			debug.setmemorycategory(b_names[i])
-			b_fns[i](b_modules[i], ...)
+			if not passSelf then
+				b_fns[i](...)
+			else
+				b_fns[i](b_modules[i], ...)
+			end
 		end
 	end
 
@@ -467,7 +508,7 @@ end
 	@function bindToHeartbeat
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
-	@param methodName string -- The name of the function to trigger.
+	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@return Cleanup
 ]=]
 function Bootstrapper.bindToHeartbeat(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
@@ -481,7 +522,7 @@ end
 	@function bindToRenderStep
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
-	@param methodName string -- The name of the function to trigger.
+	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param priority number?
 	@return Cleanup
 ]=]
@@ -502,7 +543,7 @@ end
 	@function bindToPreSimulation
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
-	@param methodName string -- The name of the function to trigger.
+	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param frequency Enum.StepFrequency?
 	@return Cleanup
 ]=]
@@ -519,7 +560,7 @@ end
 	@function bindToPostSimulation
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
-	@param methodName string -- The name of the function to trigger.
+	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@return Cleanup
 ]=]
 function Bootstrapper.bindToPostSimulation(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
@@ -531,7 +572,7 @@ end
 	@function bindToPreAnimation
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
-	@param methodName string -- The name of the function to trigger.
+	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@return Cleanup
 ]=]
 function Bootstrapper.bindToPreAnimation(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
@@ -544,7 +585,7 @@ end
 	@function bindToPreRender
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
-	@param methodName string -- The name of the function to trigger.
+	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods..
 	@return Cleanup
 ]=]
 function Bootstrapper.bindToPreRender(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
