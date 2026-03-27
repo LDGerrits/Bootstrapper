@@ -13,20 +13,16 @@ enabled = true
 includeReadme = false
 
 [[home.features]]
-title = "Predictable Flow"
-description = "Use `loadSequence` or `sort` to guarantee your modules initialize exactly when you expect."
+title = "Predictable Order"
+description = "Set a specific execution flow for your modules."
+
+[[home.features]]
+title = "Event Binding"
+description = "Connect modules directly to RunService events or custom signals."
 
 [[home.features]]
 title = "Memory Profiling"
 description = "Automatically assigns `debug.setmemorycategory` to every module's thread and RunService loop."
-
-[[home.features]]
-title = "Isolated Startup"
-description = "Errors in one module won't stop the rest of your game from loading (unless you want to)."
-
-[[home.features]]
-title = "Event Routing"
-description = "Connect modules directly to engine events or custom signals with selective binding and uniform cleanup."
 
 organizationName = "LDGerrits"
 projectName = "Bootstrapper"

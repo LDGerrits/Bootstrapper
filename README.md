@@ -1,12 +1,12 @@
 # Bootstrapper
 
-A lightweight, deterministic bootstrapper for Roblox. Find modules, ensure predictable execution order, and route RunService events with built-in memory profiling.
+A lightweight, deterministic bootstrapper for Roblox. Find modules, control the execution flow, and bind to (RunService) events with memory tracking.
 
 ## Features
 
-* **Predictable Flow:** Set a specific execution order for your modules.
+* **Predictable Order:** Set a specific execution flow for your modules.
+* **Event Binding:** Connect modules directly to RunService events or custom signals.
 * **Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and RunService loop.
-* **Event Routing:** Connect modules directly to engine events or custom signals with selective binding and uniform cleanup.
 
 ## Installation
 

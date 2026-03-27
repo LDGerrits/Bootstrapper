@@ -1,6 +1,6 @@
 [package]
 name = "ldgerrits/bootstrapper"
-description = "A lightweight bootstrapper for Roblox. Find modules, ensure predictable execution order, and route RunService events with memory profiling included."
+description = "A lightweight, deterministic bootstrapper for Roblox. Find modules, control the execution flow, and bind to (RunService) events with memory tracking."
 version = "1.0.12"
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"

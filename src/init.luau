@@ -192,9 +192,9 @@ end
 
 --[=[
 	@class Bootstrapper
-	A lightweight bootstrapper for Roblox. 
-	Find modules, ensure predictable execution order, 
-	and route RunService events with memory profiling included.
+	A lightweight, deterministic bootstrapper for Roblox.
+	Find modules, control the execution flow, 
+	and bind to (RunService) events with memory tracking.
 ]=]
 local Bootstrapper = {}
 
