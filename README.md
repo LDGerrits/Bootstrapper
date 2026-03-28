@@ -1,13 +1,23 @@
 # Bootstrapper
 
-A lightweight, agnostic scheduler for Roblox. Enforce a deterministic order of operations for modules across startup and (RunService) events.
+#### 100% Explicit Control Flow — Agnostic Module Loader & Scheduler
+
+Bootstrapper is a lightweight, agnostic module loader and scheduler for Roblox. Instead of letting individual scripts manage their own event connections, it enforces a deterministic order of operations across your entire codebase, letting you decide exactly what runs, and in what order, every single frame.
+
+## Why Bootstrapper?
+
+As Roblox projects scale, developers often fall into the trap of decentralized execution. Every module, controller or service connects to `RunService` independently. Before long, you have dozens of scripts updating independently every frame. Without strict control over whether your `InputSystem` runs before or after your `CharacterController`, you inevitably run into state bugs, race conditions, and one-frame delays.
+
+Bootstrapper solves this by treating execution flow as a single, managed pipeline. By organizing your modules into simple arrays and updating them in a strict sequence, you completely eliminate unpredictable load orders and execution desyncs. Bootstrapper makes sure things happen exactly when you tell them to, and doesn't care if you write OOP, functional, or procedural code.
 
 ## Features
 
-* **Predictable Flow:** Load modules in a deterministically sorted order (alphabetical) or define a strict manual sequence.
-* **Event Binding:** Connect modules directly to RunService events or custom signals.
-* **Method Call Syntax:** Use standard Lua syntax (`.` vs `:`) in your method names to explicitly call static functions or object methods.
-* **Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and RunService loop.
+* **Deterministic Execution:** Load modules alphabetically or provide a strict manual sequence. Your game will start exactly the same way every single time.
+* **Centralized Scheduler:** Iterate over your modules and fire their updates synchronously.
+* **Luau Method Syntax:** Use standard dot or colon notation (`.` or `:`) in your string arguments to explicitly call static functions or inject `self` for object methods.
+* **Flexible Event Binding:** Hook a sequence of modules directly to `RunService` events, `RBXScriptSignals`, or custom Signal objects.
+* **Automatic Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and `RunService` connection so your `MicroProfiler` is readable.
+* **Lazy Require:** Pass raw `ModuleScript` instances directly as argument. Bootstrapper will automatically require and cache them for you.
 
 ## Installation
 
@@ -16,7 +26,29 @@ A lightweight, agnostic scheduler for Roblox. Enforce a deterministic order of o
 Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@^1.0.15
+ldgerrits/bootstrapper@^1.0.16
+```
+
+## Quick Start
+```lua
+local Bootstrapper = require(packages.Bootstrapper)
+
+-- Strict boot sequence (manual order for core systems)
+local bootSequence = { path.to.DataService, path.to.PlayerService, path.to.ZoneService }
+Bootstrapper.run(bootSequence, ':init') -- injects self
+Bootstrapper.runAsync(bootSequence, ':start') -- injects self
+
+-- Automatic discovery (A-Z Sorting)
+local systems = Bootstrapper.loadChildren(path.to.Systems, Bootstrapper.byName('System$'))
+
+-- Execution choice
+-- Use 'run' for a strict A-Z sequence, or 'runParallel' if not
+Bootstrapper.run(systems, '.init') -- does NOT inject self
+Bootstrapper.runParallel(systems, '.start') -- does NOT inject self
+
+-- Deterministic runtime (only binds modules with 'onUpdate')
+-- Maintains alphabetical execution every frame with auto-memory profiling.
+Bootstrapper.bindToHeartbeat(systems, '.onUpdate') -- does NOT inject self
 ```
 
 ## Usage

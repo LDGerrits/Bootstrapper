@@ -13,20 +13,28 @@ enabled = true
 includeReadme = false
 
 [[home.features]]
-title = "Predictable Flow"
-description = "Load modules in a deterministically sorted order (alphabetical) or define a strict manual sequence"
+title = "Deterministic Execution"
+description = "Load modules alphabetically or provide a strict manual sequence. Your game will start exactly the same way every single time."
 
 [[home.features]]
-title = "Event Binding"
-description = "Connect modules directly to RunService events or custom signals."
+title = "Centralized Scheduler"
+description = "Iterate over your modules and fire their updates synchronously."
 
 [[home.features]]
-title = "Method Call Syntax"
-description = "Use standard Lua syntax (`.` vs `:`) in your method names to explicitly call static functions or object methods."
+title = "Luau Method Syntax"
+description = "Use standard dot or colon notation (`.` or `:`) in your string arguments to explicitly call static functions or inject `self` for object methods."
 
 [[home.features]]
-title = "Memory Profiling"
-description = "Automatically assigns `debug.setmemorycategory` to every module's thread and RunService loop."
+title = "Flexible Event Binding"
+description = "Hook a sequence of modules directly to `RunService` events, `RBXScriptSignals`, or custom Signal objects."
+
+[[home.features]]
+title = "Automatic Memory Profiling"
+description = "Automatically assigns `debug.setmemorycategory` to every module's thread and `RunService` connection so your `MicroProfiler` is readable."
+
+[[home.features]]
+title = "Lazy Require"
+description = "Pass raw `ModuleScript` instances directly as argument. Bootstrapper will automatically require and cache them for you."
 
 organizationName = "LDGerrits"
 projectName = "Bootstrapper"
