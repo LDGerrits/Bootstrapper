@@ -1,4 +1,4 @@
--- Bootstrapper v1.1.1 • LDGerrits
+-- Bootstrapper v1.1.11 • LDGerrits
 --!strict
 --!nolint LocalUnused
 --!nolint LocalShadow
@@ -53,7 +53,10 @@ end
 
 local function ensureLoaded(value: any, errors: Errors?): (LoadedModule?, string?)
 	if typeof(value) == 'Instance' and value:IsA('ModuleScript') then
+		debug.setmemorycategory(value.Name)
 		local success, result = pcall(require, value)
+		debug.resetmemorycategory()
+
 		if success then
 			if type(result) == 'table' then
 				moduleNameRegistry[result] = value.Name
@@ -91,7 +94,10 @@ local function loadFromInstances(instances: { Instance }, predicate: Predicate?)
 			continue
 		end
 
+		debug.setmemorycategory(module.Name)
 		local success, result = pcall(require, module)
+		debug.resetmemorycategory()
+
 		if success then
 			if type(result) == 'table' then
 				moduleNameRegistry[result] = module.Name
@@ -136,7 +142,6 @@ local function doCleanup(task: Task): ()
 			Disconnect: (...unknown) -> ...unknown?,
 			disconnect: (...unknown) -> ...unknown?,
 		}
-
 		if typeof(taskTable.destroy) == 'function' then
 			local t = (taskTable :: any) :: { destroy: (...unknown) -> ...unknown }
 			t:destroy()
@@ -173,12 +178,17 @@ local function createRunner(b_modules: { any }, b_fns: { any }, b_names: { strin
 	return function(...)
 		for i = 1, count do
 			debug.setmemorycategory(b_names[i])
+			local success, err
 			if not passSelf then
-				b_fns[i](...)
+				success, err = xpcall(b_fns[i], traceErrorHandler, ...)
 			else
-				b_fns[i](b_modules[i], ...)
+				success, err = xpcall(b_fns[i], traceErrorHandler, b_modules[i], ...)
+			end
+			if not success then
+				nonFatalError("Error in module '%s':\n%s", err.trace, b_names[i], err.msg)
 			end
 		end
+		debug.resetmemorycategory()
 	end
 end
 
@@ -205,13 +215,13 @@ local function internalDispatch(
 		end
 
 		debug.setmemorycategory(actualName :: string)
-
 		local success, err
 		if passSelf then
 			success, err = xpcall(fn, traceErrorHandler, module, unpack(args, 1, (args :: any).n))
 		else
 			success, err = xpcall(fn, traceErrorHandler, unpack(args, 1, (args :: any).n))
 		end
+		debug.resetmemorycategory()
 
 		if success then
 			table.insert(modulesArray, module)
@@ -255,7 +265,6 @@ local function bindToRunService(
 	end
 
 	local run = createRunner(b_modules, b_fns, b_names, count, passSelf)
-
 	local task: Task
 	if eventName == 'RenderStepped' then
 		if type(override) == 'number' then
