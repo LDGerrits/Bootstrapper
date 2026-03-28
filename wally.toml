@@ -1,7 +1,7 @@
 [package]
 name = "ldgerrits/bootstrapper"
 description = "A lightweight, agnostic scheduler and module loader for Roblox. Eliminate unpredictable load orders, race conditions, and non-deterministic event flow. By organizing your codebase into a deterministic pipeline, you know exactly what runs, and in what order, every single frame."
-version = "1.1.11"
+version = "1.1.12"
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"
 license = "MIT"

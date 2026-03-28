@@ -1,4 +1,4 @@
--- Bootstrapper v1.1.11 • LDGerrits
+-- Bootstrapper v1.1.12 • LDGerrits
 --!strict
 --!nolint LocalUnused
 --!nolint LocalShadow
@@ -297,8 +297,8 @@ end
 
 --[=[
 	@class Bootstrapper
-	A lightweight, agnostic scheduler and module loader for Roblox.
-	Eliminate unpredictable load orders, race conditions, and event connections. 
+	A lightweight, agnostic scheduler and module loader for Roblox. 
+	Eliminate unpredictable load orders, race conditions, and non-deterministic event flow. 
 	By organizing your codebase into a deterministic pipeline, 
 	you know exactly what runs, and in what order, every single frame.
 ]=]
