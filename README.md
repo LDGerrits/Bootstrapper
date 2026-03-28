@@ -1,14 +1,12 @@
 # Bootstrapper
 
-#### 100% Explicit Control Flow — Agnostic Module Loader & Scheduler
+A lightweight, agnostic scheduler and module loader for Roblox. Eliminate unpredictable load orders, race conditions, and event connections. By organizing your codebase into a deterministic pipeline, you know exactly what runs, and in what order, every single frame.
 
-Bootstrapper is a lightweight, agnostic module loader and scheduler for Roblox. Instead of letting individual scripts manage their own event connections, it enforces a deterministic order of operations across your entire codebase, letting you decide exactly what runs, and in what order, every single frame.
+## Why use this?
 
-## Why Bootstrapper?
+As Roblox projects scale, developers often fall into the trap of decentralized execution. Every module, controller or service connects to `RunService` independently, and, before long, you have dozens of scripts updating independently every frame. Without strict control over whether your `InputController` runs before or after your `CharacterController`, you inevitably run into state bugs, race conditions, and one-frame delays.
 
-As Roblox projects scale, developers often fall into the trap of decentralized execution. Every module, controller or service connects to `RunService` independently. Before long, you have dozens of scripts updating independently every frame. Without strict control over whether your `InputSystem` runs before or after your `CharacterController`, you inevitably run into state bugs, race conditions, and one-frame delays.
-
-Bootstrapper solves this by treating execution flow as a single, managed pipeline. By organizing your modules into simple arrays and updating them in a strict sequence, you completely eliminate unpredictable load orders and execution desyncs. Bootstrapper makes sure things happen exactly when you tell them to, and doesn't care if you write OOP, functional, or procedural code.
+Bootstrapper solves this by treating execution flow as a single, managed pipeline. By organizing your modules into simple arrays and updating them in a strict sequence, you completely eliminate unpredictable load orders and execution desyncs. Bootstrapper makes sure things happen exactly when you tell them to and doesn't care if you write OOP, functional, or procedural code.
 
 ## Features
 
@@ -26,7 +24,7 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@^1.0.17
+ldgerrits/bootstrapper@^1.1.0
 ```
 
 ## Quick Start
@@ -38,17 +36,18 @@ local bootSequence = { path.to.DataService, path.to.PlayerService, path.to.ZoneS
 Bootstrapper.run(bootSequence, ':init') -- injects self
 Bootstrapper.runAsync(bootSequence, ':start') -- injects self
 
--- Automatic discovery (A-Z Sorting)
+-- Automatic discovery (A-Z sorted)
 local systems = Bootstrapper.loadChildren(path.to.Systems, Bootstrapper.byName('System$'))
 
--- Execution choice
--- Use 'run' for a strict A-Z sequence, or 'runParallel' if not
+-- Use '.run' for a strict A-Z sequence, or '.runParallel' if not
 Bootstrapper.run(systems, '.init') -- does NOT inject self
 Bootstrapper.runParallel(systems, '.start') -- does NOT inject self
 
--- Deterministic runtime (only binds modules with 'onUpdate')
 -- Maintains alphabetical execution every frame with auto-memory profiling.
 Bootstrapper.bindToHeartbeat(systems, '.onUpdate') -- does NOT inject self
+
+-- Run every second without drift.
+Bootstrapper.bindToInterval(systems, '.onTick', 1.0)
 ```
 
 ## Usage
@@ -65,7 +64,7 @@ local services, errors = Bootstrapper.loadDescendants(path.to.Services, Bootstra
 
 ### 2. Manual Sequences
 
-You can use `loadSequence` to define a manual order using an array `ModuleScript` instances. This sequence can be stored and reused for all lifecycle stages.
+You can use `.loadSequence()` to define a manual order using an array `ModuleScript` instances. This sequence can be stored and reused for all lifecycle stages.
 
 ```Lua
 local services, errors = Bootstrapper.loadSequence({
@@ -83,19 +82,21 @@ When passing a method name to any Bootstrapper function, you can dictate how the
 
 - `'methodName'` or `':methodName'`: Calls as an object method. `module:methodName()`
 
-- `'.methodName'` (Static): Calls as a static function.` module.methodName()`
+- `'.methodName'`: Calls as a static function. `module.methodName()`
 
 ```lua
--- Injects 'self' into every module's 'onUpdate' method
-Bootstrapper.bindToHeartbeat(services, ':onUpdate')
+-- Injects 'self' into every module's '.onUpdate()' method
+Bootstrapper.bindToHeartbeat(services, ':onUpdate') -- injects self
+Bootstrapper.bindToHeartbeat(services, 'onUpdate') -- functionally the same as ':onUpdate'
+
 
 -- Calls 'tick' statically, without passing the module table
-Bootstrapper.bindToHeartbeat(services, '.tick')
+Bootstrapper.bindToInterval(services, '.tick', 1.0) -- does NOT inject self
 ```
 
-### 4. Lazy Resolution
+### 4. Lazy Require
 
-You don't have to call a 'load' function. You can also just pass an array of ModuleScripts directly to events, and the Bootstrapper will handle the require() and memory profiling for you automatically.
+You don't have to call a loader function. Pass an array of `ModuleScripts` directly to any function, and Bootstrapper handles the `require()` automatically.
 
 ```Lua
 -- This works even if the modules haven't been required yet
@@ -105,25 +106,23 @@ Bootstrapper.bindToHeartbeat({
 }, '.onUpdate')
 ```
 
-### 5. Execution Flow
+### 5. Execution Flow Control
 
-Trigger methods across your modules. `run` yields the current thread until all modules finish, while `parallel` fires them in background threads.
+* **.run():** Sequential & Blocking. Yields until every module finishes in order. Returns successful modules and an error map.
+
+* **.runAsync():** Sequential & Non-blocking. Executes the sequence in a background thread while maintaining order.
+
+* **.runParallel():** Parallel & Non-blocking. Fires all methods simultaneously. Best for independent tasks where order doesn't matter.
 
 ```Lua
 -- Sequential & Blocking
--- Yields until every module's '.init' finishes in order.
--- Returns an array of successful modules and a map of errors.
-local loaded, errors = Bootstrapper.run(services, 'init')
+local services, errors = Bootstrapper.run(services, '.init')
 
 -- Sequential & Non-blocking
--- Executes the sequence in the background without yielding the caller.
--- Maintains your deterministic order of operations.
-Bootstrapper.runAsync(services, 'postInit')
+Bootstrapper.runAsync(services, '.postInit')
 
 -- Parallel & Non-blocking
--- Fires all methods simultaneously for maximum speed.
--- Best for independent tasks where execution order doesn't matter.
-Bootstrapper.runParallel(services, 'start', gameData)
+Bootstrapper.runParallel(services, '.start', gameState)
 ```
 
 ### 6. Event Binding
@@ -131,14 +130,12 @@ Bootstrapper.runParallel(services, 'start', gameData)
 Route `RunService` events or signals directly to module methods. All binding functions follow the same signature: `(modules, methodName, [context])`.
 
 ```Lua
-local cleanupHeartbeat = Bootstrapper.bindToHeartbeat(services, 'onHeartbeat')
-
-local cleanupRenderStep = Bootstrapper.bindToRenderStep(services, 'onRender', Enum.RenderPriority.Last.Value)
-
-local cleanupGameState = Bootstrapper.bindTo(services, 'onGameState', GameState.Changed)
+local cleanupRenderStep = Bootstrapper.bindToRenderStep(services, '.onRender', Enum.RenderPriority.Last.Value)
+local cleanupInterval = Bootstrapper.bindToInterval(systems, '.onTick', 1.0)
+local cleanupGameState = Bootstrapper.bindTo(services, '.onGameState', GameState.Changed)
 
 -- Disconnect everything when they are no longer needed
-cleanupHeartbeat()
 cleanupRenderStep()
+cleanupInterval()
 cleanupGameState()
 ```
