@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Bootstrapper
 
-A lightweight, agnostic scheduler and module loader for Roblox. Eliminate unpredictable load orders, race conditions, and event connections. By organizing your codebase into a deterministic pipeline, you know exactly what runs, and in what order, every single frame.
+A lightweight, agnostic scheduler and module loader for Roblox. Eliminate unpredictable load orders, race conditions, and non-deterministic event flow. By organizing your codebase into a deterministic pipeline, you know exactly what runs, and in what order, every single frame.
 
 ## Why use this?
 
@@ -28,7 +28,7 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@^1.1.1
+ldgerrits/bootstrapper@^1.1.11
 ```
 
 ## Quick Start
@@ -43,7 +43,7 @@ Bootstrapper.runAsync(bootSequence, ':start') -- injects self
 -- Automatic discovery (A-Z sorted)
 local systems = Bootstrapper.loadChildren(path.to.Systems, Bootstrapper.byName('System$'))
 
--- Use '.run' for a strict A-Z sequence, or '.runConcurrent' if not
+-- Use '.run' for a strict A-Z sequence, or '.runConcurrent()' if not
 Bootstrapper.run(systems, '.init') -- does NOT inject self
 Bootstrapper.runConcurrent(systems, '.start') -- does NOT inject self
 
