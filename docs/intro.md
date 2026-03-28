@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Bootstrapper
 
-A lightweight, deterministic bootstrapper for Roblox. Find modules, control the execution flow, and bind to (RunService) events with memory tracking.
+A lightweight, agnostic scheduler for Roblox. Enforce a deterministic order of operations for modules across startup and (RunService) events.
 
 ## Features
 
@@ -20,7 +20,7 @@ A lightweight, deterministic bootstrapper for Roblox. Find modules, control the 
 Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@^1.0.14
+ldgerrits/bootstrapper@^1.0.15
 ```
 
 ## Usage
@@ -47,17 +47,15 @@ local services, errors = Bootstrapper.loadSequence({
 })
 
 -- Use the resulting services array for everything else
-Bootstrapper.callSync(services, '.init')
+Bootstrapper.run(services, '.init')
 ```
 
 ### 3. Dot vs. Colon Notation
 When passing a method name to any Bootstrapper function, you can dictate how the function is executed:
 
-- `'init'` (Default): Calls as an object method. `module:init()`
+- `'methodName'` or `':methodName'`: Calls as an object method. `module:methodName()`
 
-- `':init'` (Explicit OOP): Calls as an object method. `module:init()`
-
-- `'.init'` (Static): Calls as a static function.` module.init()`
+- `'.methodName'` (Static): Calls as a static function.` module.methodName()`
 
 ```lua
 -- Injects 'self' into every module's 'onUpdate' method
@@ -76,21 +74,28 @@ You don't have to call a 'load' function. You can also just pass an array of Mod
 Bootstrapper.bindToHeartbeat({
     path.to.CombatService,
     path.to.VFXService,
-}, 'onUpdate')
+}, '.onUpdate')
 ```
 
-### 5. Lifecycles
+### 5. Execution Flow
 
-Trigger methods across your modules. `callSync` yields the current thread until all modules finish, while `callAsync` fires them in background threads.
+Trigger methods across your modules. `run` yields the current thread until all modules finish, while `parallel` fires them in background threads.
 
 ```Lua
--- Yields until every module's `.init` function returns
--- Only modules that successfully finish '.init' are returned
-local services, errors = Bootstrapper.callSync(services, '.init')
+-- Sequential & Blocking
+-- Yields until every module's '.init' finishes in order.
+-- Returns an array of successful modules and a map of errors.
+local loaded, errors = Bootstrapper.run(services, 'init')
 
--- Fire '.start' methods without yielding
--- You can pass arguments like 'gameData' here!
-Bootstrapper.callAsync(services, '.start', gameData)
+-- Sequential & Non-blocking
+-- Executes the sequence in the background without yielding the caller.
+-- Maintains your deterministic order of operations.
+Bootstrapper.runAsync(services, 'postInit')
+
+-- Parallel & Non-blocking
+-- Fires all methods simultaneously for maximum speed.
+-- Best for independent tasks where execution order doesn't matter.
+Bootstrapper.runParallel(services, 'start', gameData)
 ```
 
 ### 6. Event Binding

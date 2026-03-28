@@ -1,4 +1,4 @@
--- Bootstrapper v1.0.14 • LDGerrits
+-- Bootstrapper v1.0.15 • LDGerrits
 --!strict
 --!nolint LocalUnused
 --!nolint LocalShadow
@@ -134,6 +134,51 @@ local function doCleanup(task: Task): ()
 	end
 end
 
+local function executeSequence(
+	modules: { any },
+	methodName: string,
+	args: { any },
+	errorPrefix: string
+): (LoadedModules, Errors?)
+	local queryName, passSelf = parseMethodName(methodName)
+	local modulesArray: LoadedModules = {}
+	local errors: Errors = {}
+
+	for _, item in modules do
+		local module, actualName = ensureLoaded(item, errors)
+		if type(module) ~= 'table' then
+			continue
+		end
+
+		local fn = module[queryName]
+		if type(fn) ~= 'function' then
+			continue
+		end
+
+		debug.setmemorycategory(actualName :: string)
+
+		local success, err = xpcall(function()
+			if not passSelf then
+				fn(unpack(args))
+			else
+				fn(module, unpack(args))
+			end
+		end, function(e)
+			return { msg = tostring(e), trace = debug.traceback('', 2) }
+		end)
+
+		if success then
+			table.insert(modulesArray, module)
+		else
+			errors[actualName :: string] = err.msg
+			local prefixStr = errorPrefix ~= '' and ` {errorPrefix}` or ''
+			nonFatalError('Error in %s:%s()%s\n%s', err.trace, actualName :: string, queryName, prefixStr, err.msg)
+		end
+	end
+
+	return modulesArray, next(errors) ~= nil and errors or nil
+end
+
 local function bindToRunService(
 	modules: { LoadedModule | ModuleScript },
 	eventName: string,
@@ -213,9 +258,8 @@ end
 
 --[=[
 	@class Bootstrapper
-	A lightweight, deterministic bootstrapper for Roblox.
-	Find modules, control the execution flow, 
-	and bind to (RunService) events with memory tracking.
+	A lightweight, agnostic scheduler for Roblox. 
+	Enforce a deterministic order of operations for modules across startup and (RunService) events.
 ]=]
 local Bootstrapper = {}
 
@@ -312,137 +356,81 @@ function Bootstrapper.loadSequence(modules: ModuleScripts, predicate: Predicate?
 end
 
 --[=[
-	Executes a method on all modules and yields the calling thread until all modules have finished.
-	Returns the succesful modules array, and a map of errors.
+	Executes methods one-by-one and yields the caller until complete.
+	Guarantees that Module A is finished before Module B starts.
 	@yields
-	@function callSync
+	@function run
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param ... any -- Additional arguments to pass to the method.
 	@return LoadedModules, Errors? -- (LoadedModules, Errors)
 ]=]
-function Bootstrapper.callSync(
+function Bootstrapper.run(
 	modules: LoadedModules | ModuleScripts,
 	methodName: string,
 	...: any
 ): (LoadedModules, Errors?)
-	local mainThread = coroutine.running()
-	local total, done = 0, 0
-	local isYielded = false
-
-	local queryName, passSelf = parseMethodName(methodName)
-	local modulesArray: LoadedModules = {}
-	local errors: Errors = {}
-
-	local b_modules = {}
-	local b_fns = {}
-	local b_names = {}
-
-	for _, item in modules :: { [any]: any } do
-		local module, actualName = ensureLoaded(item, errors)
-		if type(module) ~= 'table' then
-			continue
-		end
-
-		local fn = module[queryName]
-		if type(fn) == 'function' then
-			total += 1
-			b_modules[total] = module
-			b_fns[total] = fn
-			b_names[total] = actualName :: string
-		end
-	end
-
-	if total == 0 then
-		return modulesArray, next(errors) ~= nil and errors or nil
-	end
-
-	local passedByIndex = {}
-
-	for i = 1, total do
-		task.spawn(function(...)
-			debug.setmemorycategory(b_names[i])
-
-			local success, err = xpcall(function(...)
-				if not passSelf then
-					b_fns[i](...)
-				else
-					b_fns[i](b_modules[i], ...)
-				end
-			end, function(e)
-				return { msg = tostring(e), trace = debug.traceback('', 2) }
-			end, ...)
-
-			if success then
-				passedByIndex[i] = b_modules[i]
-			else
-				errors[b_names[i]] = err.msg
-				nonFatalError('Error in %s:%s()\n%s', err.trace, b_names[i], queryName, err.msg)
-			end
-
-			done += 1
-
-			if done == total then
-				if isYielded then
-					task.spawn(mainThread)
-				end
-			end
-		end, ...)
-	end
-
-	if done < total then
-		isYielded = true
-		coroutine.yield()
-	end
-
-	for i = 1, total do
-		if passedByIndex[i] then
-			table.insert(modulesArray, passedByIndex[i])
-		end
-	end
-
-	return modulesArray, next(errors) ~= nil and errors or nil
+	return executeSequence(modules :: { any }, methodName, { ... }, '')
 end
 
 --[=[
-	Executes a method on all modules asynchronously using `task.spawn` (Fire and forget).
-	Catches and logs errors safely to prevent thread crashing.
-	@function callAsync
+	Executes methods one-by-one in a new thread.
+	Maintains order but does not block the calling script.
+	@function runAsync
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param ... any -- Additional arguments to pass to the method.
 ]=]
-function Bootstrapper.callAsync(modules: LoadedModules | ModuleScripts, methodName: string, ...: any): ()
+function Bootstrapper.runAsync(modules: LoadedModules | ModuleScripts, methodName: string, ...: any): ()
+	local args = { ... }
+	task.spawn(function()
+		executeSequence(modules :: { any }, methodName, args, '(Async)')
+	end)
+end
+
+--[=[
+	Executes all methods simultaneously using multiple threads.
+	Fastest execution, but order of completion is not guaranteed.
+	@function runParallel
+	@within Bootstrapper
+	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
+	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
+	@param ... any -- Additional arguments to pass to the method.
+]=]
+function Bootstrapper.runParallel(modules: LoadedModules | ModuleScripts, methodName: string, ...: any): ()
 	local queryName, passSelf = parseMethodName(methodName)
+	local args = { ... }
 
-	for _, item in modules :: { [any]: any } do
-		local module, actualName = ensureLoaded(item)
-		if type(module) ~= 'table' then
-			continue
-		end
+	for _, item in modules :: { any } do
+		task.spawn(function()
+			local module, actualName = ensureLoaded(item)
+			if type(module) ~= 'table' then
+				return
+			end
 
-		local fn = module[queryName]
-		if type(fn) == 'function' then
-			task.spawn(function(...)
-				debug.setmemorycategory(actualName :: string)
+			local fn = module[queryName]
+			if type(fn) ~= 'function' then
+				return
+			end
 
-				local success, err = xpcall(function(...)
-					if not passSelf then
-						fn(...)
-					else
-						fn(module, ...)
-					end
-				end, function(e)
-					return { msg = tostring(e), trace = debug.traceback('', 2) }
-				end, ...)
+			debug.setmemorycategory(actualName :: string)
 
-				if not success then
-					nonFatalError('Error in %s:%s() (Async)\n%s', err.trace, actualName :: string, queryName, err.msg)
+			local success, err = xpcall(function()
+				if not passSelf then
+					fn(unpack(args))
+				else
+					fn(module, unpack(args))
 				end
-			end, ...)
-		end
+			end, function(e)
+				return { msg = tostring(e), trace = debug.traceback('', 2) }
+			end)
+
+			if not success then
+				nonFatalError('Error in %s:%s() (Parallel)\n%s', err.trace, actualName :: string, queryName, err.msg)
+			end
+		end)
 	end
 end
 

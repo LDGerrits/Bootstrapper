@@ -14,7 +14,7 @@ includeReadme = false
 
 [[home.features]]
 title = "Predictable Flow"
-description = "Load modules in a deterministically sorted order (alphabetical) or define a sequence manually."
+description = "Load modules in a deterministically sorted order (alphabetical) or define a strict manual sequence"
 
 [[home.features]]
 title = "Event Binding"
