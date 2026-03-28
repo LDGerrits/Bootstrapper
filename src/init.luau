@@ -1,4 +1,4 @@
--- Bootstrapper v1.1.0 • LDGerrits
+-- Bootstrapper v1.1.1 • LDGerrits
 --!strict
 --!nolint LocalUnused
 --!nolint LocalShadow
@@ -186,7 +186,7 @@ local function internalDispatch(
 	modules: { any },
 	methodName: string,
 	args: { any },
-	mode: 'Sync' | 'Async' | 'Parallel'
+	mode: 'Sync' | 'Async' | 'Concurrent'
 ): (LoadedModules, Errors?)
 	local queryName, passSelf = parseMethodName(methodName)
 	local modulesArray: LoadedModules = {}
@@ -384,14 +384,14 @@ end
 --[=[
 	Executes all methods simultaneously using multiple threads.
 	Fastest execution, but order of completion is not guaranteed.
-	@function runParallel
+	@function runConcurrent
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param ... any -- Additional arguments to pass to the method.
 ]=]
-function Bootstrapper.runParallel(modules: LoadedModules | ModuleScripts, methodName: string, ...: any): ()
-	internalDispatch(modules :: { any }, methodName, table.pack(...), 'Parallel')
+function Bootstrapper.runConcurrent(modules: LoadedModules | ModuleScripts, methodName: string, ...: any): ()
+	internalDispatch(modules :: { any }, methodName, table.pack(...), 'Concurrent')
 end
 
 --[=[

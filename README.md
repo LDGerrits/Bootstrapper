@@ -15,7 +15,7 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 * **Luau Method Syntax:** Use standard dot or colon notation (`.` or `:`) in your string arguments to explicitly call static functions or inject `self` for object methods.
 * **Flexible Event Binding:** Hook a sequence of modules directly to `RunService` events, `RBXScriptSignals`, or custom Signal objects.
 * **Automatic Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and `RunService` connection so your `MicroProfiler` is readable.
-* **Lazy Require:** Pass raw `ModuleScript` instances directly as argument. Bootstrapper will automatically require and cache them for you.
+* **Lazy Require:** Pass raw `ModuleScript` instances directly as argument. Bootstrapper will automatically require them.
 
 ## Installation
 
@@ -24,7 +24,7 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@^1.1.0
+ldgerrits/bootstrapper@^1.1.1
 ```
 
 ## Quick Start
@@ -39,15 +39,15 @@ Bootstrapper.runAsync(bootSequence, ':start') -- injects self
 -- Automatic discovery (A-Z sorted)
 local systems = Bootstrapper.loadChildren(path.to.Systems, Bootstrapper.byName('System$'))
 
--- Use '.run' for a strict A-Z sequence, or '.runParallel' if not
+-- Use '.run' for a strict A-Z sequence, or '.runConcurrent' if not
 Bootstrapper.run(systems, '.init') -- does NOT inject self
-Bootstrapper.runParallel(systems, '.start') -- does NOT inject self
+Bootstrapper.runConcurrent(systems, '.start') -- does NOT inject self
 
 -- Maintains alphabetical execution every frame with auto-memory profiling.
 Bootstrapper.bindToHeartbeat(systems, '.onUpdate') -- does NOT inject self
 
 -- Run every second without drift.
-Bootstrapper.bindToInterval(systems, '.onTick', 1.0)
+Bootstrapper.bindToInterval(systems, '.onTick', 1.0) -- does NOT inject self
 ```
 
 ## Usage
@@ -112,7 +112,7 @@ Bootstrapper.bindToHeartbeat({
 
 * **.runAsync():** Sequential & Non-blocking. Executes the sequence in a background thread while maintaining order.
 
-* **.runParallel():** Parallel & Non-blocking. Fires all methods simultaneously. Best for independent tasks where order doesn't matter.
+* **.runConcurrent():** Concurrent & Non-blocking. Fires all methods simultaneously. Best for independent tasks where order doesn't matter.
 
 ```Lua
 -- Sequential & Blocking
@@ -121,8 +121,8 @@ local services, errors = Bootstrapper.run(services, '.init')
 -- Sequential & Non-blocking
 Bootstrapper.runAsync(services, '.postInit')
 
--- Parallel & Non-blocking
-Bootstrapper.runParallel(services, '.start', gameState)
+-- Concurrent & Non-blocking
+Bootstrapper.runConcurrent(services, '.start', gameState)
 ```
 
 ### 6. Event Binding
