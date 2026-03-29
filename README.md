@@ -33,14 +33,14 @@ local Bootstrapper = require(packages.Bootstrapper)
 
 -- Strict boot sequence (manual order for core systems)
 local bootSequence = { path.to.DataService, path.to.PlayerService, path.to.ZoneService }
-Bootstrapper.run(bootSequence, ':init') -- injects self
+Bootstrapper.runSync(bootSequence, ':init') -- injects self
 Bootstrapper.runAsync(bootSequence, ':start') -- injects self
 
 -- Automatic discovery (A-Z sorted)
 local systems = Bootstrapper.loadChildren(path.to.Systems, Bootstrapper.byName('System$'))
 
--- Use '.run' for a strict A-Z sequence, or '.runConcurrent()' if not
-Bootstrapper.run(systems, '.init') -- does NOT inject self
+-- Use '.runSync' for a strict A-Z sequence, or '.runConcurrent()' if not
+Bootstrapper.runSync(systems, '.init') -- does NOT inject self
 Bootstrapper.runConcurrent(systems, '.start') -- does NOT inject self
 
 -- Maintains alphabetical execution every frame with auto-memory profiling.
@@ -74,7 +74,7 @@ local services, errors = Bootstrapper.loadSequence({
 })
 
 -- Use the resulting services array for everything else
-Bootstrapper.run(services, '.init')
+Bootstrapper.runSync(services, '.init')
 ```
 
 ### 3. Dot vs. Colon Notation
@@ -116,7 +116,7 @@ Bootstrapper.bindToHeartbeat({
 
 ```Lua
 -- Sequential & Yielding
-local services, errors = Bootstrapper.run(services, '.init')
+local services, errors = Bootstrapper.runSync(services, '.init')
 
 -- Sequential & Non-yielding
 Bootstrapper.runAsync(services, '.postInit')
