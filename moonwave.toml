@@ -34,7 +34,7 @@ description = "Automatically assigns `debug.setmemorycategory` to every module's
 
 [[home.features]]
 title = "Lazy Require"
-description = "Pass raw `ModuleScript` instances directly as argument. Bootstrapper will automatically require and cache them for you."
+description = "Pass raw `ModuleScript` instances directly as argument. Bootstrapper will automatically require them."
 
 organizationName = "LDGerrits"
 projectName = "Bootstrapper"
