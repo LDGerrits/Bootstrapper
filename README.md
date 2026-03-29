@@ -1,6 +1,6 @@
 # Bootstrapper
 
-A lightweight, agnostic scheduler and module loader for Roblox. Eliminate unpredictable load orders, race conditions, and non-deterministic event flow. By organizing your codebase into a deterministic pipeline, you know exactly what runs, and in what order, every single frame.
+A lightweight, agnostic module loader and scheduler for Roblox. Eliminate load-order bugs and race conditions by organizing your modules into a deterministic pipeline. Define exactly what runs, and in what order, every single frame with zero ambiguity.
 
 ## Why use this?
 
@@ -12,7 +12,7 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 
 * **Deterministic Execution:** Load modules alphabetically or provide a strict manual sequence. Your game will start exactly the same way every single time.
 * **Centralized Scheduler:** Iterate over your modules and fire their updates synchronously.
-* **Luau Method Syntax:** Use standard dot or colon notation (`.` or `:`) in your string arguments to explicitly call static functions or inject `self` for object methods.
+* **Luau Method Syntax:** Use standard dot or colon notation (`.` or `:`) in your string arguments to explicitly call functions or inject `self` for object methods.
 * **Flexible Event Binding:** Hook a sequence of modules directly to `RunService` events, `RBXScriptSignals`, or custom Signal objects.
 * **Automatic Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and `RunService` connection so your `MicroProfiler` is readable.
 * **Lazy Require:** Pass raw `ModuleScript` instances directly as argument. Bootstrapper will automatically require them.
@@ -24,7 +24,7 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@^1.1.12
+ldgerrits/bootstrapper@^1.2.0
 ```
 
 ## Quick Start
@@ -82,7 +82,7 @@ When passing a method name to any Bootstrapper function, you can dictate how the
 
 - `'methodName'` or `':methodName'`: Calls as an object method. `module:methodName()`
 
-- `'.methodName'`: Calls as a static function. `module.methodName()`
+- `'.methodName'`: Calls as a function. `module.methodName()`
 
 ```lua
 -- Injects 'self' into every module's '.onUpdate()' method
@@ -90,7 +90,7 @@ Bootstrapper.bindToHeartbeat(services, ':onUpdate') -- injects self
 Bootstrapper.bindToHeartbeat(services, 'onUpdate') -- functionally the same as ':onUpdate'
 
 
--- Calls 'tick' statically, without passing the module table
+-- Calls '.tick()' statically, without passing the module table
 Bootstrapper.bindToInterval(services, '.tick', 1.0) -- does NOT inject self
 ```
 
@@ -108,20 +108,20 @@ Bootstrapper.bindToHeartbeat({
 
 ### 5. Execution Flow Control
 
-* **.run():** Sequential & Blocking. Yields until every module finishes in order. Returns successful modules and an error map.
+* **.runSync():** Sequential & Yielding. Yields until every module finishes in order. Returns successful modules and an error map.
 
-* **.runAsync():** Sequential & Non-blocking. Executes the sequence in a background thread while maintaining order.
+* **.runAsync():** Sequential & Non-yielding. Executes the sequence in a background thread while maintaining order.
 
-* **.runConcurrent():** Concurrent & Non-blocking. Fires all methods simultaneously. Best for independent tasks where order doesn't matter.
+* **.runConcurrent():** Concurrent & Non-yielding. Fires all methods simultaneously. Best for independent tasks where order doesn't matter.
 
 ```Lua
--- Sequential & Blocking
+-- Sequential & Yielding
 local services, errors = Bootstrapper.run(services, '.init')
 
--- Sequential & Non-blocking
+-- Sequential & Non-yielding
 Bootstrapper.runAsync(services, '.postInit')
 
--- Concurrent & Non-blocking
+-- Concurrent & Non-yielding
 Bootstrapper.runConcurrent(services, '.start', gameState)
 ```
 
