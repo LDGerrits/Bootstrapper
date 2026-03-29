@@ -1,4 +1,4 @@
--- Bootstrapper v1.1.12 • LDGerrits
+-- Bootstrapper v1.1.13 • LDGerrits
 --!strict
 --!nolint LocalUnused
 --!nolint LocalShadow
@@ -10,6 +10,8 @@ local moduleNameRegistry = setmetatable({}, { __mode = 'k' })
 
 export type LoadedModule = { [string]: any }
 export type LoadedModules = { LoadedModule }
+export type ModulePath = string
+export type ModulePaths = { ModulePath }
 export type ModuleScripts = { ModuleScript }
 export type Errors = { [string]: string }
 export type Predicate = (module: ModuleScript) -> boolean
@@ -30,10 +32,6 @@ export type Task =
 	| { Disconnect: (unknown) -> () }
 	| { Task }
 
-local function sortByName(a: Instance, b: Instance)
-	return a.Name < b.Name
-end
-
 local function traceErrorHandler(e)
 	return { msg = tostring(e), trace = debug.traceback('', 2) }
 end
@@ -51,19 +49,21 @@ local function nonFatalError(messageTemplate: string, trace: string?, ...: any)
 	task.spawn(error, formattedString, 0)
 end
 
-local function ensureLoaded(value: any, errors: Errors?): (LoadedModule?, string?)
+local function resolveSource(value: any, errors: Errors?): (LoadedModule?, string?)
 	if typeof(value) == 'Instance' and value:IsA('ModuleScript') then
-		debug.setmemorycategory(value.Name)
+		local moduleName = value.Name
+
+		debug.setmemorycategory(moduleName)
 		local success, result = pcall(require, value)
 		debug.resetmemorycategory()
 
 		if success then
 			if type(result) == 'table' then
-				moduleNameRegistry[result] = value.Name
+				moduleNameRegistry[result] = moduleName
 			end
-			return result, value.Name
+			return result, moduleName
 		else
-			local errName = value.Name
+			local errName = moduleName
 			local errMsg = tostring(result)
 			if errors then
 				errors[errName] = errMsg
@@ -71,41 +71,66 @@ local function ensureLoaded(value: any, errors: Errors?): (LoadedModule?, string
 			nonFatalError("Failed to resolve ModuleScript '%s':\n%s", nil, errName, errMsg)
 			return nil, errName
 		end
+	elseif type(value) == 'string' then
+		local moduleName = value:match('([^/]+)$') or value
+
+		debug.setmemorycategory(moduleName)
+		local success, result = pcall(require, value)
+		debug.resetmemorycategory()
+
+		if success then
+			if type(result) == 'table' then
+				moduleNameRegistry[result] = moduleName
+			end
+			return result, moduleName
+		else
+			local errMsg = tostring(result)
+			if errors then
+				errors[value] = errMsg
+			end
+			nonFatalError("Failed to require string path '%s':\n%s", nil, value, errMsg)
+			return nil, value
+		end
 	elseif type(value) == 'table' then
 		return value, moduleNameRegistry[value] or 'UnknownModule'
 	end
 	return nil, nil
 end
 
-local function loadFromInstances(instances: { Instance }, predicate: Predicate?): (LoadedModules, Errors?)
+local function resolveBatch(sources: { Instance | ModulePath }, predicate: Predicate?): (LoadedModules, Errors?)
 	local modulesArray, errors = {}, {}
-	local scripts = {}
+	local loadQueue = {}
 
-	for _, inst in instances do
-		if inst:IsA('ModuleScript') then
-			table.insert(scripts, inst)
-		end
-	end
+	for _, item in sources do
+		local isModuleScript = typeof(item) == 'Instance' and item:IsA('ModuleScript')
+		local isModulePath = type(item) == 'string'
 
-	table.sort(scripts, sortByName)
-
-	for _, module in scripts do
-		if predicate and not predicate(module) then
+		if not (isModuleScript or isModulePath) then
 			continue
 		end
 
-		debug.setmemorycategory(module.Name)
-		local success, result = pcall(require, module)
-		debug.resetmemorycategory()
+		if isModuleScript and predicate and not predicate(item :: ModuleScript) then
+			continue
+		end
 
-		if success then
-			if type(result) == 'table' then
-				moduleNameRegistry[result] = module.Name
-			end
+		local name = if isModuleScript
+			then (item :: ModuleScript).Name
+			else ((item :: ModulePath):match('([^/]+)$') or item)
+
+		table.insert(loadQueue, {
+			name = name,
+			value = item,
+		})
+	end
+
+	table.sort(loadQueue, function(a, b)
+		return a.name < b.name
+	end)
+
+	for _, entry in loadQueue do
+		local result, _ = resolveSource(entry.value, errors)
+		if result then
 			table.insert(modulesArray, result)
-		else
-			errors[module.Name] = tostring(result)
-			nonFatalError("Failed to load '%s':\n%s", nil, module.Name, tostring(result))
 		end
 	end
 
@@ -161,7 +186,7 @@ end
 local function buildBatch(modules: { any }, queryName: string)
 	local b_modules, b_fns, b_names, count = {}, {}, {}, 0
 	for _, item in modules do
-		local module, actualName = ensureLoaded(item)
+		local module, actualName = resolveSource(item)
 		if type(module) ~= 'table' then
 			continue
 		end
@@ -192,7 +217,7 @@ local function createRunner(b_modules: { any }, b_fns: { any }, b_names: { strin
 	end
 end
 
-local function internalDispatch(
+local function dispatch(
 	modules: { any },
 	methodName: string,
 	args: { any },
@@ -204,7 +229,7 @@ local function internalDispatch(
 	local errorSuffix = if mode == 'Sync' then '' else `({mode})`
 
 	local function execute(item)
-		local module, actualName = ensureLoaded(item, errors)
+		local module, actualName = resolveSource(item, errors)
 		if type(module) ~= 'table' then
 			return
 		end
@@ -252,7 +277,7 @@ local function internalDispatch(
 end
 
 local function bindToRunService(
-	modules: { LoadedModule | ModuleScript },
+	modules: LoadedModules | ModuleScripts | ModulePaths,
 	eventName: string,
 	methodName: string,
 	override: (number | EnumItem)?
@@ -328,7 +353,7 @@ end
 	@return LoadedModules, Errors?
 ]=]
 function Bootstrapper.loadChildren(parent: Instance, predicate: Predicate?): (LoadedModules, Errors?)
-	return loadFromInstances(parent:GetChildren(), predicate)
+	return resolveBatch(parent:GetChildren(), predicate)
 end
 
 --[=[
@@ -342,7 +367,7 @@ end
 	@return LoadedModules, Errors?
 ]=]
 function Bootstrapper.loadDescendants(parent: Instance, predicate: Predicate?): (LoadedModules, Errors?)
-	return loadFromInstances(parent:GetDescendants(), predicate)
+	return resolveBatch(parent:GetDescendants(), predicate)
 end
 
 --[=[
@@ -355,7 +380,7 @@ end
 	@return LoadedModules, Errors?
 ]=]
 function Bootstrapper.loadSequence(modules: ModuleScripts, predicate: Predicate?): (LoadedModules, Errors?)
-	return loadFromInstances((modules :: any) :: { Instance }, predicate)
+	return resolveBatch((modules :: any) :: { Instance }, predicate)
 end
 
 --[=[
@@ -364,17 +389,17 @@ end
 	@yields
 	@function run
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param ... any -- Additional arguments to pass to the method.
 	@return LoadedModules, Errors?
 ]=]
 function Bootstrapper.run(
-	modules: LoadedModules | ModuleScripts,
+	modules: LoadedModules | ModuleScripts | ModulePaths,
 	methodName: string,
 	...: any
 ): (LoadedModules, Errors?)
-	return internalDispatch(modules :: { any }, methodName, table.pack(...), 'Sync')
+	return dispatch(modules :: { any }, methodName, table.pack(...), 'Sync')
 end
 
 --[=[
@@ -382,12 +407,12 @@ end
 	Maintains order but does not block the calling script.
 	@function runAsync
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param ... any -- Additional arguments to pass to the method.
 ]=]
-function Bootstrapper.runAsync(modules: LoadedModules | ModuleScripts, methodName: string, ...: any): ()
-	internalDispatch(modules :: { any }, methodName, table.pack(...), 'Async')
+function Bootstrapper.runAsync(modules: LoadedModules | ModuleScripts | ModulePaths, methodName: string, ...: any): ()
+	dispatch(modules :: { any }, methodName, table.pack(...), 'Async')
 end
 
 --[=[
@@ -395,24 +420,32 @@ end
 	Fastest execution, but order of completion is not guaranteed.
 	@function runConcurrent
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param ... any -- Additional arguments to pass to the method.
 ]=]
-function Bootstrapper.runConcurrent(modules: LoadedModules | ModuleScripts, methodName: string, ...: any): ()
-	internalDispatch(modules :: { any }, methodName, table.pack(...), 'Concurrent')
+function Bootstrapper.runConcurrent(
+	modules: LoadedModules | ModuleScripts | ModulePaths,
+	methodName: string,
+	...: any
+): ()
+	dispatch(modules :: { any }, methodName, table.pack(...), 'Concurrent')
 end
 
 --[=[
 	Binds a method across all modules to an RBXScriptSignal, a custom Signal, or a subscription function.
 	@function bindTo
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts.
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param event Event -- An RBXScriptSignal, custom Signal or a subscription function.
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
-function Bootstrapper.bindTo(modules: LoadedModules | ModuleScripts, methodName: string, event: Event): Cleanup
+function Bootstrapper.bindTo(
+	modules: LoadedModules | ModuleScripts | ModulePaths,
+	methodName: string,
+	event: Event
+): Cleanup
 	local queryName, passSelf = parseMethodName(methodName)
 	local b_modules, b_fns, b_names, count = buildBatch(modules, queryName)
 
@@ -438,14 +471,14 @@ end
 	Binds a method to run at a specific time interval (in seconds) while not allowing drift.
 	@function bindToInterval
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The collection to bind.
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Supports '.' and ':' notation.
 	@param interval number -- Time in seconds between executions.
 	@param signal RBXScriptSignal? -- Optional signal to hook (defaults to Heartbeat). RenderStepped is not allowed.
 	@return Cleanup -- A function to stop the interval.
 ]=]
 function Bootstrapper.bindToInterval(
-	modules: LoadedModules | ModuleScripts,
+	modules: LoadedModules | ModuleScripts | ModulePaths,
 	methodName: string,
 	interval: number,
 	signal: RBXScriptSignal?
@@ -487,11 +520,11 @@ end
 	Hooks a specified method in all modules to `RunService.Heartbeat`.
 	@function bindToHeartbeat
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
-function Bootstrapper.bindToHeartbeat(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
+function Bootstrapper.bindToHeartbeat(modules: LoadedModules | ModuleScripts | ModulePaths, methodName: string): Cleanup
 	return bindToRunService(modules, 'Heartbeat', methodName)
 end
 
@@ -501,13 +534,13 @@ end
 	@client
 	@function bindToRenderStep
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param priority number? -- Optional execution priority. If provided, uses BindToRenderStep instead of RenderStepped.
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
 function Bootstrapper.bindToRenderStep(
-	modules: LoadedModules | ModuleScripts,
+	modules: LoadedModules | ModuleScripts | ModulePaths,
 	methodName: string,
 	priority: number?
 ): Cleanup
@@ -520,13 +553,13 @@ end
 	or `RunService:BindToSimulation` if a frequency is given.
 	@function bindToPreSimulation
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@param frequency Enum.StepFrequency? -- Optional execution frequency. If provided, uses BindToSimulation instead of PreSimulation.
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
 function Bootstrapper.bindToPreSimulation(
-	modules: LoadedModules | ModuleScripts,
+	modules: LoadedModules | ModuleScripts | ModulePaths,
 	methodName: string,
 	frequency: Enum.StepFrequency?
 ): Cleanup
@@ -537,11 +570,14 @@ end
 	Hooks a specified method in all modules to `RunService.PostSimulation`.
 	@function bindToPostSimulation
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
-function Bootstrapper.bindToPostSimulation(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
+function Bootstrapper.bindToPostSimulation(
+	modules: LoadedModules | ModuleScripts | ModulePaths,
+	methodName: string
+): Cleanup
 	return bindToRunService(modules, 'PostSimulation', methodName)
 end
 
@@ -549,11 +585,14 @@ end
 	Hooks a specified method in all modules to `RunService.PreAnimation`.
 	@function bindToPreAnimation
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
-function Bootstrapper.bindToPreAnimation(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
+function Bootstrapper.bindToPreAnimation(
+	modules: LoadedModules | ModuleScripts | ModulePaths,
+	methodName: string
+): Cleanup
 	return bindToRunService(modules, 'PreAnimation', methodName)
 end
 
@@ -562,11 +601,11 @@ end
 	@client
 	@function bindToPreRender
 	@within Bootstrapper
-	@param modules LoadedModules | ModuleScripts -- The array of loaded modules or ModuleScripts
+	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to execute. Prefix with '.' for static calls or ':' for object methods.
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
-function Bootstrapper.bindToPreRender(modules: LoadedModules | ModuleScripts, methodName: string): Cleanup
+function Bootstrapper.bindToPreRender(modules: LoadedModules | ModuleScripts | ModulePaths, methodName: string): Cleanup
 	assert(RunService:IsClient(), '[Bootstrapper] bindToPreRender can only be called on the Client.')
 	return bindToRunService(modules, 'PreRender', methodName)
 end
