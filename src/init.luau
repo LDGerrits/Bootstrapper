@@ -402,14 +402,14 @@ end
 	Calls methods one-by-one and yields until complete.
 	Guarantees that Module A is finished before Module B starts.
 	@yields
-	@function runSync
+	@function run
 	@within Bootstrapper
 	@param modules LoadedModules | ModuleScripts | ModulePaths -- The array of loaded modules, ModuleScripts, or ModulePaths.
 	@param methodName string -- The method to call. Prefix with '.' for standard calls; otherwise, the module is implicitly passed as 'self'.
 	@param ... any -- Additional arguments to pass to the method.
 	@return LoadedModules, Errors?
 ]=]
-function Bootstrapper.runSync(
+function Bootstrapper.run(
 	modules: LoadedModules | ModuleScripts | ModulePaths,
 	methodName: string,
 	...: any
