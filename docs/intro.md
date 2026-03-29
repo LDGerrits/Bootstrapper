@@ -28,7 +28,7 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@^1.2.0
+ldgerrits/bootstrapper@^1.2.1
 ```
 
 ## Quick Start
