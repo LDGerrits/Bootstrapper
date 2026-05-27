@@ -1,6 +1,6 @@
 # Bootstrapper
 
-A lightweight, agnostic module loader and scheduler for Roblox. Eliminate load-order bugs and race conditions by organizing your modules into a deterministic pipeline. Define exactly what runs, and in what order, every single frame with zero ambiguity.
+A lightweight, agnostic module loader and scheduler for Roblox. Eliminate load-order bugs and race conditions by organizing your modules into a deterministic pipeline. Define exactly what runs, and in what order, every single frame.
 
 ## Why use this?
 
