@@ -264,7 +264,7 @@ local function dispatch(
 	modules: { Instance | ModulePath | LoadedModule },
 	methodName: string,
 	args: { [number]: any, n: number },
-	mode: 'Sync' | 'Async' | 'Concurrent'
+	mode: 'Sync' | 'Async' | 'Concurrent' | 'ConcurrentYielding'
 ): (LoadedModules, Errors?)
 	local parsedMethodName, includeSelf = parseMethodName(methodName)
 	local loadedModules: LoadedModules = {}
@@ -311,9 +311,39 @@ local function dispatch(
 				execute(value)
 			end
 		end)
-	else
+	elseif mode == 'Concurrent' then
 		for _, value in resolvedQueue do
 			task.spawn(execute, value)
+		end
+	else
+		local yieldedThreads = {}
+		for _, value in resolvedQueue do
+			local didYield = true
+			local moduleThread = task.spawn(function()
+				execute(value)
+				didYield = false
+			end)
+
+			if didYield then
+				table.insert(yieldedThreads, moduleThread)
+			end 
+		end
+
+		if #yieldedThreads ~= 0 then
+			while true do
+				local areAllThreadsFinished = true
+				for _, moduleThread in pairs(yieldedThreads) do
+					if coroutine.status(moduleThread) ~= "dead" then
+						areAllThreadsFinished = false
+					end
+				end
+
+				if areAllThreadsFinished then
+					break
+				end
+
+				task.wait()
+			end
 		end
 	end
 
@@ -477,7 +507,6 @@ end
 
 --[=[
 	Calls all methods simultaneously using multiple threads.
-	Fastest execution, but order of completion is not guaranteed.
 	@function runConcurrent
 	@within Bootstrapper
 	@param modules { Instance | ModulePath | LoadedModule } -- An array of ModuleScripts, Paths, Folders, or loaded modules.
@@ -486,6 +515,26 @@ end
 ]=]
 function Bootstrapper.runConcurrent(modules: { Instance | ModulePath | LoadedModule }, methodName: string, ...: any): ()
 	dispatch(modules, methodName, table.pack(...), 'Concurrent')
+end
+
+--[=[
+	Calls all methods simultaneously using multiple threads, yielding until all have finished running.
+	Guarantees that methods are called in order, but, if any methods yield, does not guarantee they finish in order.
+	If none of the called methods yield, then this function will not yield to the task scheduler.
+	@yields
+	@function runConcurrentYielding
+	@within Bootstrapper
+	@param modules { Instance | ModulePath | LoadedModule } -- An array of ModuleScripts, Paths, Folders, or loaded modules.
+	@param methodName string -- The method to call. Prefix with '.' for standard calls; otherwise, the module is implicitly passed as 'self'.
+	@param ... any -- Additional arguments to pass to the method.
+	@return LoadedModules, Errors?
+]=]
+function Bootstrapper.runConcurrentYielding(
+	modules: { Instance | ModulePath | LoadedModule },
+	methodName: string,
+	...: any
+): (LoadedModules, Errors?)
+	return dispatch(modules, methodName, table.pack(...), 'ConcurrentYielding')
 end
 
 --[=[
