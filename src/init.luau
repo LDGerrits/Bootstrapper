@@ -176,13 +176,28 @@ local function parseMethodName(methodName: string): (string, boolean)
 	return methodName, true
 end
 
-local function callMethod(module: LoadedModule, name: string, methodName: string, includeSelf: boolean, ...: any)
+-- Returns nil if the module has no such method, including strict modules that error on unknown keys
+local function getMethod(module: LoadedModule, methodName: string): ((...any) -> ...any)?
+	local success, method = pcall(function()
+		return module[methodName]
+	end)
+	return if success and type(method) == 'function' then method else nil
+end
+
+local function callMethod(
+	method: (...any) -> ...any,
+	module: LoadedModule,
+	name: string,
+	methodName: string,
+	includeSelf: boolean,
+	...: any
+)
 	debug.setmemorycategory(name)
 	local success, err
 	if includeSelf then
-		success, err = xpcall(module[methodName], traceErrorHandler, module, ...)
+		success, err = xpcall(method, traceErrorHandler, module, ...)
 	else
-		success, err = xpcall(module[methodName], traceErrorHandler, ...)
+		success, err = xpcall(method, traceErrorHandler, ...)
 	end
 	debug.resetmemorycategory()
 
@@ -209,8 +224,9 @@ local function dispatch(
 	local function execute(index: number)
 		running[index] = true
 		local module, name, fullName = loadModule(queue[index], errors)
-		if module and type(module[parsedMethodName]) == 'function' then
-			local err = callMethod(module, name, parsedMethodName, includeSelf, table.unpack(args, 1, args.n))
+		local method = module and getMethod(module, parsedMethodName)
+		if module and method then
+			local err = callMethod(method, module, name, parsedMethodName, includeSelf, table.unpack(args, 1, args.n))
 			if err then
 				addError(errors, fullName, err)
 				module = nil
@@ -224,7 +240,8 @@ local function dispatch(
 		local names = {}
 		for index = 1, #queue do
 			if running[index] then
-				table.insert(names, (getNames(queue[index])))
+				local _, fullName = getNames(queue[index])
+				table.insert(names, fullName)
 			end
 		end
 		local waitingOn = table.concat(names, ', ')
@@ -280,10 +297,11 @@ local function bind(modules: ModuleList, methodName: string, event: Event): Clea
 	local targets: { { module: LoadedModule, method: (...any) -> ...any, name: string, label: string } } = {}
 	for _, value in resolveModules(modules) do
 		local module, name = loadModule(value)
-		if module and type(module[parsedMethodName]) == 'function' then
+		local method = module and getMethod(module, parsedMethodName)
+		if module and method then
 			table.insert(targets, {
 				module = module,
-				method = module[parsedMethodName],
+				method = method,
 				name = name,
 				label = `{name}:{parsedMethodName}`,
 			})
@@ -297,9 +315,10 @@ local function bind(modules: ModuleList, methodName: string, event: Event): Clea
 	-- Runs every frame, so it uses one xpcall for all modules and resumes after the module that errored
 	local function run(...)
 		local index = 0
+		local count = #targets
 		local profiling = isProfiling
 		local function callRemaining(...: any): ...any
-			while index < #targets do
+			while index < count do
 				index += 1
 				local target = targets[index]
 				if profiling then
@@ -317,7 +336,7 @@ local function bind(modules: ModuleList, methodName: string, event: Event): Clea
 			end
 		end
 
-		while index < #targets do
+		while index < count do
 			local success, err = xpcall(callRemaining, traceErrorHandler, ...)
 			if not success then
 				if profiling then
@@ -346,7 +365,7 @@ local Bootstrapper = {}
 	Disabled by default for performance. Loading, `run` and `spawn` always set memory categories.
 	@function setProfiling
 	@within Bootstrapper
-	@param enabled boolean
+	@param enabled boolean -- Whether bound methods are profiled.
 ]=]
 function Bootstrapper.setProfiling(enabled: boolean)
 	isProfiling = enabled

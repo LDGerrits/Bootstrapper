@@ -39,8 +39,10 @@ Bootstrapper.spawn(bootSequence, ':start') -- injects self
 -- Automatic discovery (A-Z sorted)
 local systems = Bootstrapper.loadChildren(path.to.Systems, Bootstrapper.byName('System$'))
 
--- Use '.run' for a strict A-Z sequence, or '.runConcurrent()' if not
+-- Use '.run()' for a strict A-Z sequence, or '.runConcurrent()' if not
 Bootstrapper.run(systems, '.init') -- does NOT inject self
+
+-- Use '.spawn()' or '.spawnConcurrent()' for methods that keep running
 Bootstrapper.spawnConcurrent(systems, '.start') -- does NOT inject self
 
 -- Maintains alphabetical execution every frame.
@@ -110,7 +112,7 @@ Bootstrapper.bindToHeartbeat({
 
 * **.run():** Sequential & Yielding. Yields until every module finishes in order. Returns every loaded module except those whose method errored, plus an error map.
 
-* **.runConcurrent():** Concurrent & Yielding. Fires all methods simultaneously and yields until every module finishes. Returns every loaded module except those whose method errored, in their original order, plus an error map.
+* **.runConcurrent():** Concurrent & Yielding. Fires all methods simultaneously and yields until every module finishes. Methods start in order but may finish in any order. Returns every loaded module except those whose method errored, in their original order, plus an error map.
 
 * **.spawn():** Sequential & Non-yielding. Executes the sequence in a background thread while maintaining order.
 
