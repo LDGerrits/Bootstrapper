@@ -95,10 +95,7 @@ local function loadModule(value: any, errors: Errors?): (LoadedModule?, string, 
 		return value, name, fullName
 	end
 
-	debug.setmemorycategory(name)
 	local success, result = pcall(require, value)
-	debug.resetmemorycategory()
-
 	if success and type(result) ~= 'table' then
 		success, result = false, `Module must return a table; got {type(result)}`
 	end
@@ -192,6 +189,7 @@ local function callMethod(
 	includeSelf: boolean,
 	...: any
 )
+	local category = debug.getmemorycategory()
 	debug.setmemorycategory(name)
 	local success, err
 	if includeSelf then
@@ -199,7 +197,7 @@ local function callMethod(
 	else
 		success, err = xpcall(method, traceErrorHandler, ...)
 	end
-	debug.resetmemorycategory()
+	debug.setmemorycategory(category)
 
 	if not success then
 		reportError(`Error in {name}:{methodName}()\n{err.msg}`, err.trace)
@@ -317,6 +315,7 @@ local function bind(modules: ModuleList, methodName: string, event: Event): Clea
 		local index = 0
 		local count = #targets
 		local profiling = isProfiling
+		local category = profiling and debug.getmemorycategory()
 		local function callRemaining(...: any): ...any
 			while index < count do
 				index += 1
@@ -346,7 +345,7 @@ local function bind(modules: ModuleList, methodName: string, event: Event): Clea
 			end
 		end
 		if profiling then
-			debug.resetmemorycategory()
+			debug.setmemorycategory(category :: string)
 		end
 	end
 
