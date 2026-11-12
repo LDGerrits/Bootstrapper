@@ -282,11 +282,11 @@ end
 -- Calls the method on every module each time the event fires
 local function bind(modules: ModuleList, methodName: string, connect: (run: (...any) -> ()) -> Task): Cleanup
 	local parsedMethodName, includeSelf = parseMethodName(methodName)
-	local targets: { { module: LoadedModule, name: string } } = {}
+	local targets: { { module: LoadedModule, method: (...any) -> ...any, name: string } } = {}
 	for _, value in resolveModules(modules) do
 		local module, name = loadModule(value)
 		if module and type(module[parsedMethodName]) == 'function' then
-			table.insert(targets, { module = module, name = name })
+			table.insert(targets, { module = module, method = module[parsedMethodName], name = name })
 		end
 	end
 
@@ -294,10 +294,21 @@ local function bind(modules: ModuleList, methodName: string, connect: (run: (...
 		return function() end
 	end
 
+	-- Runs every frame, so this loop calls methods directly instead of through callMethod
 	local connection = connect(function(...)
 		for _, target in targets do
-			callMethod(target.module, target.name, parsedMethodName, includeSelf, ...)
+			debug.setmemorycategory(target.name)
+			local success, err
+			if includeSelf then
+				success, err = xpcall(target.method, traceErrorHandler, target.module, ...)
+			else
+				success, err = xpcall(target.method, traceErrorHandler, ...)
+			end
+			if not success then
+				reportError(`Error in {target.name}:{parsedMethodName}()\n{err.msg}`, err.trace)
+			end
 		end
+		debug.resetmemorycategory()
 	end)
 	return function()
 		doCleanup(connection)
