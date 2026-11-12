@@ -4,7 +4,7 @@
 	@class Bootstrapper
 	A lightweight, agnostic module loader and scheduler for Roblox.
 	Eliminate load-order bugs and race conditions by organizing your modules into a deterministic pipeline.
-	Define exactly what runs, and in what order, every single frame with zero ambiguity.
+	Define exactly what runs, and in what order, every single frame.
 ]=]
 
 local RunService = game:GetService('RunService')
@@ -12,6 +12,7 @@ local RunService = game:GetService('RunService')
 local YIELD_WARNING_TIME = 10
 
 local batchCounter = 0
+local isProfiling = false
 local moduleSources = setmetatable({}, { __mode = 'k' })
 
 export type LoadedModule = { [string]: any }
@@ -187,9 +188,9 @@ local function callMethod(module: LoadedModule, name: string, methodName: string
 
 	if not success then
 		reportError(`Error in {name}:{methodName}()\n{err.msg}`, err.trace)
-		return false, err.msg
+		return err.msg
 	end
-	return true, nil
+	return nil
 end
 
 local function dispatch(
@@ -209,10 +210,9 @@ local function dispatch(
 		running[index] = true
 		local module, name, fullName = loadModule(queue[index], errors)
 		if module and type(module[parsedMethodName]) == 'function' then
-			local success, message =
-				callMethod(module, name, parsedMethodName, includeSelf, table.unpack(args, 1, args.n))
-			if not success then
-				addError(errors, fullName, message :: string)
+			local err = callMethod(module, name, parsedMethodName, includeSelf, table.unpack(args, 1, args.n))
+			if err then
+				addError(errors, fullName, err)
 				module = nil
 			end
 		end
@@ -221,20 +221,15 @@ local function dispatch(
 	end
 
 	local function warnStillRunning()
-		local stillRunning = {}
+		local names = {}
 		for index = 1, #queue do
 			if running[index] then
-				table.insert(stillRunning, (getNames(queue[index])))
+				table.insert(names, (getNames(queue[index])))
 			end
 		end
-
-		local runName = if isConcurrent then 'runConcurrent' else 'run'
-		local spawnName = if isConcurrent then 'spawnConcurrent' else 'spawn'
+		local waitingOn = table.concat(names, ', ')
 		warn(
-			`[Bootstrapper] Infinite yield possible in {runName}('{methodName}'): still waiting on {table.concat(
-				stillRunning,
-				', '
-			)} after {YIELD_WARNING_TIME}s. Use {spawnName}() if these methods never return.`
+			`[Bootstrapper] Infinite yield possible: '{methodName}' is still running in {waitingOn}. Use spawn() or spawnConcurrent() for methods that never return.`
 		)
 	end
 
@@ -280,13 +275,18 @@ local function dispatch(
 end
 
 -- Calls the method on every module each time the event fires
-local function bind(modules: ModuleList, methodName: string, connect: (run: (...any) -> ()) -> Task): Cleanup
+local function bind(modules: ModuleList, methodName: string, event: Event): Cleanup
 	local parsedMethodName, includeSelf = parseMethodName(methodName)
-	local targets: { { module: LoadedModule, method: (...any) -> ...any, name: string } } = {}
+	local targets: { { module: LoadedModule, method: (...any) -> ...any, name: string, label: string } } = {}
 	for _, value in resolveModules(modules) do
 		local module, name = loadModule(value)
 		if module and type(module[parsedMethodName]) == 'function' then
-			table.insert(targets, { module = module, method = module[parsedMethodName], name = name })
+			table.insert(targets, {
+				module = module,
+				method = module[parsedMethodName],
+				name = name,
+				label = `{name}:{parsedMethodName}`,
+			})
 		end
 	end
 
@@ -294,28 +294,63 @@ local function bind(modules: ModuleList, methodName: string, connect: (run: (...
 		return function() end
 	end
 
-	-- Runs every frame, so this loop calls methods directly instead of through callMethod
-	local connection = connect(function(...)
-		for _, target in targets do
-			debug.setmemorycategory(target.name)
-			local success, err
-			if includeSelf then
-				success, err = xpcall(target.method, traceErrorHandler, target.module, ...)
-			else
-				success, err = xpcall(target.method, traceErrorHandler, ...)
-			end
-			if not success then
-				reportError(`Error in {target.name}:{parsedMethodName}()\n{err.msg}`, err.trace)
+	-- Runs every frame, so it uses one xpcall for all modules and resumes after the module that errored
+	local function run(...)
+		local index = 0
+		local profiling = isProfiling
+		local function callRemaining(...: any): ...any
+			while index < #targets do
+				index += 1
+				local target = targets[index]
+				if profiling then
+					debug.profilebegin(target.label)
+					debug.setmemorycategory(target.name)
+				end
+				if includeSelf then
+					target.method(target.module, ...)
+				else
+					target.method(...)
+				end
+				if profiling then
+					debug.profileend()
+				end
 			end
 		end
-		debug.resetmemorycategory()
-	end)
+
+		while index < #targets do
+			local success, err = xpcall(callRemaining, traceErrorHandler, ...)
+			if not success then
+				if profiling then
+					debug.profileend()
+				end
+				reportError(`Error in {targets[index].label}()\n{err.msg}`, err.trace)
+			end
+		end
+		if profiling then
+			debug.resetmemorycategory()
+		end
+	end
+
+	local connection = if type(event) == 'function'
+		then event(run)
+		else ((event :: any).Connect or (event :: any).connect)(event, run)
 	return function()
 		doCleanup(connection)
 	end
 end
 
 local Bootstrapper = {}
+
+--[=[
+	Enables MicroProfiler labels and memory categories for every bound method.
+	Disabled by default for performance. Loading, `run` and `spawn` always set memory categories.
+	@function setProfiling
+	@within Bootstrapper
+	@param enabled boolean
+]=]
+function Bootstrapper.setProfiling(enabled: boolean)
+	isProfiling = enabled
+end
 
 --[=[
 	Creates a predicate function that matches a module's name against a string.
@@ -337,7 +372,7 @@ end
 	@function loadChildren
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
-	@param predicate: PredicateFn? -- Optional filter to include specific modules (e.g., Bootstrapper.byName("Service$")).
+	@param predicate PredicateFn? -- Optional filter to include specific modules (e.g., Bootstrapper.byName("Service$")).
 	@return LoadedModules, Errors?
 ]=]
 function Bootstrapper.loadChildren(parent: Instance, predicate: PredicateFn?): (LoadedModules, Errors?)
@@ -351,7 +386,7 @@ end
 	@function loadDescendants
 	@within Bootstrapper
 	@param parent Instance -- The Instance to search within.
-	@param predicate: PredicateFn? -- Optional filter to include specific modules (e.g., Bootstrapper.byName("Service$")).
+	@param predicate PredicateFn? -- Optional filter to include specific modules (e.g., Bootstrapper.byName("Service$")).
 	@return LoadedModules, Errors?
 ]=]
 function Bootstrapper.loadDescendants(parent: Instance, predicate: PredicateFn?): (LoadedModules, Errors?)
@@ -440,13 +475,7 @@ end
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
 function Bootstrapper.bindTo(modules: ModuleList, methodName: string, event: Event): Cleanup
-	return bind(modules, methodName, function(run)
-		if type(event) == 'function' then
-			return event(run)
-		end
-		local connect = (event :: any).Connect or (event :: any).connect
-		return connect(event, run)
-	end)
+	return bind(modules, methodName, event)
 end
 
 --[=[
@@ -497,9 +526,7 @@ end
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
 function Bootstrapper.bindToHeartbeat(modules: ModuleList, methodName: string): Cleanup
-	return bind(modules, methodName, function(run)
-		return RunService.Heartbeat:Connect(run)
-	end)
+	return bind(modules, methodName, RunService.Heartbeat)
 end
 
 --[=[
@@ -515,14 +542,13 @@ end
 ]=]
 function Bootstrapper.bindToRenderStep(modules: ModuleList, methodName: string, priority: number?): Cleanup
 	assert(RunService:IsClient(), '[Bootstrapper] bindToRenderStep can only be called on the Client.')
-	return bind(modules, methodName, function(run)
-		if not priority then
-			return RunService.RenderStepped:Connect(run)
-		end
+	if not priority then
+		return bind(modules, methodName, RunService.RenderStepped)
+	end
 
-		batchCounter += 1
-		local parsedMethodName = parseMethodName(methodName)
-		local bindName = `Bootstrapper_RenderBatch_{batchCounter}_{parsedMethodName}`
+	batchCounter += 1
+	local bindName = `Bootstrapper_RenderBatch_{batchCounter}_{parseMethodName(methodName)}`
+	return bind(modules, methodName, function(run)
 		RunService:BindToRenderStep(bindName, priority, run)
 		return function()
 			RunService:UnbindFromRenderStep(bindName)
@@ -545,11 +571,11 @@ function Bootstrapper.bindToPreSimulation(
 	methodName: string,
 	frequency: Enum.StepFrequency?
 ): Cleanup
+	if not frequency then
+		return bind(modules, methodName, RunService.PreSimulation)
+	end
 	return bind(modules, methodName, function(run)
-		if frequency then
-			return RunService:BindToSimulation(run, frequency)
-		end
-		return RunService.PreSimulation:Connect(run)
+		return RunService:BindToSimulation(run, frequency)
 	end)
 end
 
@@ -562,9 +588,7 @@ end
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
 function Bootstrapper.bindToPostSimulation(modules: ModuleList, methodName: string): Cleanup
-	return bind(modules, methodName, function(run)
-		return RunService.PostSimulation:Connect(run)
-	end)
+	return bind(modules, methodName, RunService.PostSimulation)
 end
 
 --[=[
@@ -576,9 +600,7 @@ end
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
 function Bootstrapper.bindToPreAnimation(modules: ModuleList, methodName: string): Cleanup
-	return bind(modules, methodName, function(run)
-		return RunService.PreAnimation:Connect(run)
-	end)
+	return bind(modules, methodName, RunService.PreAnimation)
 end
 
 --[=[
@@ -592,9 +614,7 @@ end
 ]=]
 function Bootstrapper.bindToPreRender(modules: ModuleList, methodName: string): Cleanup
 	assert(RunService:IsClient(), '[Bootstrapper] bindToPreRender can only be called on the Client.')
-	return bind(modules, methodName, function(run)
-		return RunService.PreRender:Connect(run)
-	end)
+	return bind(modules, methodName, RunService.PreRender)
 end
 
 return Bootstrapper

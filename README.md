@@ -14,7 +14,7 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 * **Centralized Scheduler:** Iterate over your modules and fire their updates synchronously.
 * **Luau Method Syntax:** Use standard dot or colon notation (`.` or `:`) in your string arguments to explicitly call functions or inject `self` for object methods.
 * **Flexible Event Binding:** Hook a sequence of modules directly to `RunService` events, `RBXScriptSignals`, or custom Signal objects.
-* **Automatic Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and `RunService` connection so your `MicroProfiler` is readable.
+* **Built-in Profiling:** Modules are loaded and run under their own memory category, so the Developer Console shows memory usage per module. Call `Bootstrapper.setProfiling(true)` to do the same for bound methods and label them in the `MicroProfiler`.
 * **Lazy Require:** Pass raw `ModuleScript` instances directly as argument. Bootstrapper will automatically require them.
 
 ## Installation
@@ -43,7 +43,7 @@ local systems = Bootstrapper.loadChildren(path.to.Systems, Bootstrapper.byName('
 Bootstrapper.run(systems, '.init') -- does NOT inject self
 Bootstrapper.spawnConcurrent(systems, '.start') -- does NOT inject self
 
--- Maintains alphabetical execution every frame with auto-memory profiling.
+-- Maintains alphabetical execution every frame.
 Bootstrapper.bindToHeartbeat(systems, '.onUpdate') -- does NOT inject self
 
 -- Run every second without drift.
