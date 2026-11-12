@@ -62,7 +62,7 @@ end
 
 local function reportError(message: string, trace: string?)
 	if trace then
-		message ..= `\n---- Stack trace ----\n{trace}`
+		message ..= `\n---- Stack trace ----{trace}`
 	end
 	local formatted = (`[Bootstrapper] {message}`):gsub('\n', '\n    ')
 	task.spawn(error, formatted, 0)
