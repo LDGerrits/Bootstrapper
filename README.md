@@ -24,7 +24,7 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@1.2.2
+ldgerrits/bootstrapper@2.0.0
 ```
 
 ## Quick Start
@@ -34,14 +34,14 @@ local Bootstrapper = require(packages.Bootstrapper)
 -- Strict boot sequence (manual order for core systems)
 local bootSequence = { path.to.DataService, path.to.PlayerService, path.to.ZoneService }
 Bootstrapper.run(bootSequence, ':init') -- injects self
-Bootstrapper.runAsync(bootSequence, ':start') -- injects self
+Bootstrapper.spawn(bootSequence, ':start') -- injects self
 
 -- Automatic discovery (A-Z sorted)
 local systems = Bootstrapper.loadChildren(path.to.Systems, Bootstrapper.byName('System$'))
 
 -- Use '.run' for a strict A-Z sequence, or '.runConcurrent()' if not
 Bootstrapper.run(systems, '.init') -- does NOT inject self
-Bootstrapper.runConcurrent(systems, '.start') -- does NOT inject self
+Bootstrapper.spawnConcurrent(systems, '.start') -- does NOT inject self
 
 -- Maintains alphabetical execution every frame with auto-memory profiling.
 Bootstrapper.bindToHeartbeat(systems, '.onUpdate') -- does NOT inject self
@@ -108,21 +108,31 @@ Bootstrapper.bindToHeartbeat({
 
 ### 5. Execution Flow Control
 
-* **.run():** Sequential & Yielding. Yields until every module finishes in order. Returns successful modules and an error map.
+* **.run():** Sequential & Yielding. Yields until every module finishes in order. Returns every loaded module except those whose method errored, plus an error map.
 
-* **.runAsync():** Sequential & Non-yielding. Executes the sequence in a background thread while maintaining order.
+* **.runConcurrent():** Concurrent & Yielding. Fires all methods simultaneously and yields until every module finishes. Returns every loaded module except those whose method errored, in their original order, plus an error map.
 
-* **.runConcurrent():** Concurrent & Non-yielding. Fires all methods simultaneously. Best for independent tasks where order doesn't matter.
+* **.spawn():** Sequential & Non-yielding. Executes the sequence in a background thread while maintaining order.
+
+* **.spawnConcurrent():** Concurrent & Non-yielding. Fires all methods simultaneously. Best for independent tasks where order doesn't matter.
+
+`.run()` and `.runConcurrent()` warn when they are still yielding after 10 seconds. Use `.spawn()` or `.spawnConcurrent()` for methods that never return, such as game loops.
+
+The error map is keyed by each module's full name, such as `ServerScriptService.Services.DataService`.
 
 ```Lua
 -- Sequential & Yielding
+-- Drops modules whose init errored, so they are not started below
 local services, errors = Bootstrapper.run(services, '.init')
 
+-- Concurrent & Yielding
+Bootstrapper.runConcurrent(services, '.loadData')
+
 -- Sequential & Non-yielding
-Bootstrapper.runAsync(services, '.postInit')
+Bootstrapper.spawn(services, '.postInit')
 
 -- Concurrent & Non-yielding
-Bootstrapper.runConcurrent(services, '.start', gameState)
+Bootstrapper.spawnConcurrent(services, '.start', gameState)
 ```
 
 ### 6. Event Binding

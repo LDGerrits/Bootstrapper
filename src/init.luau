@@ -1,5 +1,5 @@
 --!strict
---v1.2.2 • LDGerrits
+--v2.0.0 • LDGerrits
 --[=[
 	@class Bootstrapper
 	A lightweight, agnostic module loader and scheduler for Roblox. 
@@ -9,8 +9,11 @@
 
 local RunService = game:GetService('RunService')
 
+local YIELD_WARNING_TIME = 10
+
 local batchCounter = 0
 local moduleRegistry = setmetatable({}, { __mode = 'k' })
+local moduleFullNames = setmetatable({}, { __mode = 'k' })
 
 export type LoadedModule = { [string]: any }
 export type LoadedModules = { LoadedModule }
@@ -59,6 +62,10 @@ local function doCleanup(task: Task): ()
 		elseif typeof(taskTable.disconnect) == 'function' then
 			local t = (taskTable :: any) :: { disconnect: (...unknown) -> ...unknown }
 			t:disconnect()
+		else
+			for _, subtask in task :: { Task } do
+				doCleanup(subtask)
+			end
 		end
 	end
 end
@@ -80,9 +87,19 @@ local function nonFatalError(messageTemplate: string, trace: string?, ...: any)
 	task.spawn(error, formattedString, 0)
 end
 
-local function loadModule(value: any, errors: Errors?): (LoadedModule?, string?)
+local function addError(errors: Errors, errorKey: string, errMsg: string)
+	local uniqueKey = errorKey
+	local count = 1
+	while errors[uniqueKey] do
+		count += 1
+		uniqueKey = `{errorKey} ({count})`
+	end
+	errors[uniqueKey] = errMsg
+end
+
+local function loadModule(value: any, errors: Errors?): (LoadedModule?, string?, string?)
 	if type(value) == 'table' then
-		return value, moduleRegistry[value] or 'UnknownModule'
+		return value, moduleRegistry[value] or 'UnknownModule', moduleFullNames[value] or 'UnknownModule'
 	end
 
 	local identity: string
@@ -91,7 +108,7 @@ local function loadModule(value: any, errors: Errors?): (LoadedModule?, string?)
 
 	if typeof(value) == 'Instance' and value:IsA('ModuleScript') then
 		identity = value.Name
-		errorKey = identity
+		errorKey = value:GetFullName()
 		sourceLabel = 'ModuleScript'
 	elseif type(value) == 'string' then
 		identity = value:match('([^/]+)$') or value
@@ -108,23 +125,24 @@ local function loadModule(value: any, errors: Errors?): (LoadedModule?, string?)
 	if not success then
 		local errMsg = tostring(result)
 		if errors then
-			errors[errorKey] = errMsg
+			addError(errors, errorKey, errMsg)
 		end
 		nonFatalError("Failed to require %s '%s':\n%s", nil, sourceLabel, errorKey, errMsg)
-		return nil, errorKey
+		return nil, identity, errorKey
 	end
 
 	if type(result) ~= 'table' then
 		local errMsg = `Module must return a table; got {type(result)}`
 		if errors then
-			errors[errorKey] = errMsg
+			addError(errors, errorKey, errMsg)
 		end
 		nonFatalError("Invalid %s '%s':\n%s", nil, sourceLabel, errorKey, errMsg)
-		return nil, errorKey
+		return nil, identity, errorKey
 	end
 
 	moduleRegistry[result] = identity
-	return result, identity
+	moduleFullNames[result] = errorKey
+	return result, identity, errorKey
 end
 
 local function resolveModules(
@@ -171,6 +189,16 @@ local function resolveModules(
 	end
 
 	return queue
+end
+
+local function filterModuleScripts(instances: { Instance }): { ModuleScript }
+	local moduleScripts: { ModuleScript } = {}
+	for _, instance in instances do
+		if instance:IsA('ModuleScript') then
+			table.insert(moduleScripts, instance :: ModuleScript)
+		end
+	end
+	return moduleScripts
 end
 
 local function loadModules(
@@ -264,25 +292,28 @@ local function dispatch(
 	modules: { Instance | ModulePath | LoadedModule },
 	methodName: string,
 	args: { [number]: any, n: number },
-	mode: 'Sync' | 'Async' | 'Concurrent'
+	mode: 'run' | 'runConcurrent' | 'spawn' | 'spawnConcurrent'
 ): (LoadedModules, Errors?)
 	local parsedMethodName, includeSelf = parseMethodName(methodName)
-	local loadedModules: LoadedModules = {}
 	local errors: Errors = {}
-	local errorSuffix = if mode == 'Sync' then '' else `({mode})`
+	local errorSuffix = if mode == 'run' then '' else `({mode})`
 	local resolvedQueue = resolveModules(modules)
+	local results: { [number]: LoadedModule } = {}
+	local running: { [number]: string } = {}
 
-	local function execute(value)
-		local module, identity = loadModule(value, errors)
+	local function execute(index: number)
+		local module, identity, errorKey = loadModule(resolvedQueue[index], errors)
 		if not module then
 			return
 		end
 
 		local fn = module[parsedMethodName]
 		if type(fn) ~= 'function' then
+			results[index] = module
 			return
 		end
 
+		running[index] = identity :: string
 		debug.setmemorycategory(identity :: string)
 		local success, err
 		if includeSelf then
@@ -291,29 +322,76 @@ local function dispatch(
 			success, err = xpcall(fn, traceErrorHandler, table.unpack(args, 1, args.n))
 		end
 		debug.resetmemorycategory()
+		running[index] = nil
 
 		if success then
-			table.insert(loadedModules, module)
+			results[index] = module
 		else
-			errors[identity :: string] = err.msg
+			addError(errors, errorKey :: string, err.msg)
 			local suffixStr = errorSuffix ~= '' and ` {errorSuffix}` or ''
 			nonFatalError('Error in %s:%s()%s\n%s', err.trace, identity :: string, parsedMethodName, suffixStr, err.msg)
 		end
 	end
 
-	if mode == 'Sync' then
-		for _, value in resolvedQueue do
-			execute(value)
-		end
-	elseif mode == 'Async' then
+	if mode == 'spawn' then
 		task.spawn(function()
-			for _, value in resolvedQueue do
-				execute(value)
+			for index in resolvedQueue do
+				execute(index)
 			end
 		end)
+	elseif mode == 'spawnConcurrent' then
+		for index in resolvedQueue do
+			task.spawn(execute, index)
+		end
 	else
-		for _, value in resolvedQueue do
-			task.spawn(execute, value)
+		local warningThread = task.delay(YIELD_WARNING_TIME, function()
+			local stillRunning = {}
+			for index = 1, #resolvedQueue do
+				if running[index] then
+					table.insert(stillRunning, running[index])
+				end
+			end
+
+			local spawnName = if mode == 'run' then 'spawn' else 'spawnConcurrent'
+			local waitingOn = if #stillRunning > 0 then ` on {table.concat(stillRunning, ', ')}` else ''
+			warn(
+				`[Bootstrapper] Infinite yield possible in {mode}('{methodName}'): still waiting{waitingOn} after {YIELD_WARNING_TIME}s. Use {spawnName}() if these methods never return.`
+			)
+		end)
+
+		if mode == 'run' then
+			for index in resolvedQueue do
+				execute(index)
+			end
+		else
+			local pending = #resolvedQueue
+			local isWaiting = false
+			local caller = coroutine.running()
+
+			for index in resolvedQueue do
+				task.spawn(function()
+					execute(index)
+					pending -= 1
+					if pending == 0 and isWaiting then
+						task.spawn(caller)
+					end
+				end)
+			end
+
+			-- Only yield if a method yielded, otherwise nothing would resume us
+			if pending > 0 then
+				isWaiting = true
+				coroutine.yield()
+			end
+		end
+
+		task.cancel(warningThread)
+	end
+
+	local loadedModules: LoadedModules = {}
+	for index = 1, #resolvedQueue do
+		if results[index] then
+			table.insert(loadedModules, results[index])
 		end
 	end
 
@@ -414,7 +492,7 @@ end
 	@return LoadedModules, Errors?
 ]=]
 function Bootstrapper.loadChildren(parent: Instance, predicate: PredicateFn?): (LoadedModules, Errors?)
-	return loadModules(parent:GetChildren(), true, predicate)
+	return loadModules(filterModuleScripts(parent:GetChildren()), true, predicate)
 end
 
 --[=[
@@ -428,7 +506,7 @@ end
 	@return LoadedModules, Errors?
 ]=]
 function Bootstrapper.loadDescendants(parent: Instance, predicate: PredicateFn?): (LoadedModules, Errors?)
-	return loadModules(parent:GetDescendants(), true, predicate)
+	return loadModules(filterModuleScripts(parent:GetDescendants()), true, predicate)
 end
 
 --[=[
@@ -446,6 +524,8 @@ end
 --[=[
 	Calls methods one-by-one and yields until complete.
 	Guarantees that Module A is finished before Module B starts.
+	Returns every loaded module except those whose method errored, so the result can be passed to the next stage.
+	Warns if still yielding after 10 seconds. Use `spawn` for methods that never return.
 	@yields
 	@function run
 	@within Bootstrapper
@@ -459,33 +539,58 @@ function Bootstrapper.run(
 	methodName: string,
 	...: any
 ): (LoadedModules, Errors?)
-	return dispatch(modules, methodName, table.pack(...), 'Sync')
+	return dispatch(modules, methodName, table.pack(...), 'run')
 end
 
 --[=[
-	Calls methods one-by-one in a new thread.
-	Maintains order but does not yield.
-	@function runAsync
-	@within Bootstrapper
-	@param modules { Instance | ModulePath | LoadedModule } -- An array of ModuleScripts, Paths, Folders, or loaded modules.
-	@param methodName string -- The method to call. Prefix with '.' for standard calls; otherwise, the module is implicitly passed as 'self'.
-	@param ... any -- Additional arguments to pass to the method.
-]=]
-function Bootstrapper.runAsync(modules: { Instance | ModulePath | LoadedModule }, methodName: string, ...: any): ()
-	dispatch(modules, methodName, table.pack(...), 'Async')
-end
-
---[=[
-	Calls all methods simultaneously using multiple threads.
-	Fastest execution, but order of completion is not guaranteed.
+	Calls all methods simultaneously using multiple threads and yields until all are complete.
+	Methods start in order, but order of completion is not guaranteed.
+	Returns every loaded module except those whose method errored, in their original order.
+	Warns if still yielding after 10 seconds. Use `spawnConcurrent` for methods that never return.
+	@yields
 	@function runConcurrent
 	@within Bootstrapper
 	@param modules { Instance | ModulePath | LoadedModule } -- An array of ModuleScripts, Paths, Folders, or loaded modules.
 	@param methodName string -- The method to call. Prefix with '.' for standard calls; otherwise, the module is implicitly passed as 'self'.
 	@param ... any -- Additional arguments to pass to the method.
+	@return LoadedModules, Errors?
 ]=]
-function Bootstrapper.runConcurrent(modules: { Instance | ModulePath | LoadedModule }, methodName: string, ...: any): ()
-	dispatch(modules, methodName, table.pack(...), 'Concurrent')
+function Bootstrapper.runConcurrent(
+	modules: { Instance | ModulePath | LoadedModule },
+	methodName: string,
+	...: any
+): (LoadedModules, Errors?)
+	return dispatch(modules, methodName, table.pack(...), 'runConcurrent')
+end
+
+--[=[
+	Calls methods one-by-one in a new thread.
+	Maintains order but does not yield.
+	@function spawn
+	@within Bootstrapper
+	@param modules { Instance | ModulePath | LoadedModule } -- An array of ModuleScripts, Paths, Folders, or loaded modules.
+	@param methodName string -- The method to call. Prefix with '.' for standard calls; otherwise, the module is implicitly passed as 'self'.
+	@param ... any -- Additional arguments to pass to the method.
+]=]
+function Bootstrapper.spawn(modules: { Instance | ModulePath | LoadedModule }, methodName: string, ...: any): ()
+	dispatch(modules, methodName, table.pack(...), 'spawn')
+end
+
+--[=[
+	Calls all methods simultaneously using multiple threads.
+	Fastest execution and does not yield, but order of completion is not guaranteed.
+	@function spawnConcurrent
+	@within Bootstrapper
+	@param modules { Instance | ModulePath | LoadedModule } -- An array of ModuleScripts, Paths, Folders, or loaded modules.
+	@param methodName string -- The method to call. Prefix with '.' for standard calls; otherwise, the module is implicitly passed as 'self'.
+	@param ... any -- Additional arguments to pass to the method.
+]=]
+function Bootstrapper.spawnConcurrent(
+	modules: { Instance | ModulePath | LoadedModule },
+	methodName: string,
+	...: any
+): ()
+	dispatch(modules, methodName, table.pack(...), 'spawnConcurrent')
 end
 
 --[=[
