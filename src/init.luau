@@ -130,7 +130,7 @@ local function getModuleScripts(instances: { Instance }, predicate: PredicateFn?
 end
 
 -- Expands folders into their ModuleScripts and removes duplicates
-local function resolveModules(modules: ModuleList): { any }
+local function resolveModules(modules: ModuleList, predicate: PredicateFn?): { any }
 	local queue = {}
 	local seen = {}
 	local function add(value: any)
@@ -142,20 +142,20 @@ local function resolveModules(modules: ModuleList): { any }
 
 	for _, value in modules do
 		if typeof(value) == 'Instance' and not value:IsA('ModuleScript') then
-			for _, moduleScript in getModuleScripts(value:GetChildren()) do
+			for _, moduleScript in getModuleScripts(value:GetChildren(), predicate) do
 				add(moduleScript)
 			end
-		else
+		elseif not (predicate and typeof(value) == 'Instance' and not predicate(value)) then
 			add(value)
 		end
 	end
 	return queue
 end
 
-local function loadModules(modules: ModuleList): (LoadedModules, Errors?)
+local function loadModules(modules: ModuleList, predicate: PredicateFn?): (LoadedModules, Errors?)
 	local loadedModules: LoadedModules = {}
 	local errors: Errors = {}
-	for _, value in resolveModules(modules) do
+	for _, value in resolveModules(modules, predicate) do
 		local module = loadModule(value, errors)
 		if module then
 			table.insert(loadedModules, module)
@@ -412,15 +412,16 @@ function Bootstrapper.loadDescendants(parent: Instance, predicate: PredicateFn?)
 end
 
 --[=[
-	Requires specific modules in a guaranteed sequence array.
+	Requires modules in the order given. Folders load their direct child ModuleScripts, sorted by name.
 	@yields
-	@function loadSequence
+	@function load
 	@within Bootstrapper
 	@param modules { Instance | ModulePath | LoadedModule } -- An array of ModuleScripts, Paths, Folders, or loaded modules.
+	@param predicate PredicateFn? -- Optional filter for ModuleScripts (e.g., Bootstrapper.byName("Service$")).
 	@return LoadedModules, Errors?
 ]=]
-function Bootstrapper.loadSequence(modules: ModuleList): (LoadedModules, Errors?)
-	return loadModules(modules)
+function Bootstrapper.load(modules: ModuleList, predicate: PredicateFn?): (LoadedModules, Errors?)
+	return loadModules(modules, predicate)
 end
 
 --[=[

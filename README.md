@@ -66,10 +66,10 @@ local services, errors = Bootstrapper.loadDescendants(path.to.Services, Bootstra
 
 ### 2. Manual Sequences
 
-You can use `.loadSequence()` to define a manual order using an array `ModuleScript` instances. This sequence can be stored and reused for all lifecycle stages.
+You can use `.load()` to define a manual order using an array of `ModuleScript` instances. This sequence can be stored and reused for all lifecycle stages. Like the other load functions, it takes an optional predicate.
 
 ```Lua
-local services, errors = Bootstrapper.loadSequence({
+local services, errors = Bootstrapper.load({
     path.to.DataService,
     path.to.PlayerService,
     path.to.AssetService,
