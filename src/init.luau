@@ -549,21 +549,22 @@ function Bootstrapper.bindToHeartbeat(modules: ModuleList, methodName: string): 
 end
 
 --[=[
-	Hooks a specified method in all modules to `RunService.RenderStepped`
-	or `RunService:BindToRenderStep` if a priority is given.
+	Hooks a specified method in all modules to `RunService:BindToRenderStep` with the given priority.
+	Use `bindToPreRender` to run every frame without a priority.
 	@client
 	@function bindToRenderStep
 	@within Bootstrapper
 	@param modules { Instance | LoadedModule } -- An array of ModuleScripts, Folders, or loaded modules.
 	@param methodName string -- The method to call. Prefix with '.' for standard calls; otherwise, the module is implicitly passed as 'self'.
-	@param priority number? -- Optional execution priority. If provided, uses BindToRenderStep instead of RenderStepped.
-	@return Cleanup -- A cleanup function to disconnect the event.
+	@param priority number -- Execution priority, such as `Enum.RenderPriority.Camera.Value`.
+	@return Cleanup -- A cleanup function to unbind the method.
 ]=]
-function Bootstrapper.bindToRenderStep(modules: ModuleList, methodName: string, priority: number?): Cleanup
+function Bootstrapper.bindToRenderStep(modules: ModuleList, methodName: string, priority: number): Cleanup
 	assert(RunService:IsClient(), '[Bootstrapper] bindToRenderStep can only be called on the Client.')
-	if not priority then
-		return bind(modules, methodName, RunService.RenderStepped)
-	end
+	assert(
+		type(priority) == 'number',
+		'[Bootstrapper] bindToRenderStep requires a priority. Use bindToPreRender instead.'
+	)
 
 	batchCounter += 1
 	local bindName = `Bootstrapper_RenderBatch_{batchCounter}_{parseMethodName(methodName)}`
@@ -576,25 +577,35 @@ function Bootstrapper.bindToRenderStep(modules: ModuleList, methodName: string, 
 end
 
 --[=[
-	Hooks a specified method in all modules to `RunService.PreSimulation`
-	or `RunService:BindToSimulation` if a frequency is given.
+	Hooks a specified method in all modules to `RunService.PreSimulation`.
 	@function bindToPreSimulation
 	@within Bootstrapper
 	@param modules { Instance | LoadedModule } -- An array of ModuleScripts, Folders, or loaded modules.
 	@param methodName string -- The method to call. Prefix with '.' for standard calls; otherwise, the module is implicitly passed as 'self'.
-	@param frequency Enum.StepFrequency? -- Optional execution frequency. If provided, uses BindToSimulation instead of PreSimulation.
 	@return Cleanup -- A cleanup function to disconnect the event.
 ]=]
-function Bootstrapper.bindToPreSimulation(
+function Bootstrapper.bindToPreSimulation(modules: ModuleList, methodName: string): Cleanup
+	return bind(modules, methodName, RunService.PreSimulation)
+end
+
+--[=[
+	Hooks a specified method in all modules to `RunService:BindToSimulation`, which runs at a fixed rate.
+	@function bindToSimulation
+	@within Bootstrapper
+	@param modules { Instance | LoadedModule } -- An array of ModuleScripts, Folders, or loaded modules.
+	@param methodName string -- The method to call. Prefix with '.' for standard calls; otherwise, the module is implicitly passed as 'self'.
+	@param frequency Enum.StepFrequency? -- How often to run. Defaults to 30 times per second.
+	@param priority number? -- Execution priority relative to other simulation bindings. Defaults to 2000.
+	@return Cleanup -- A cleanup function to disconnect the binding.
+]=]
+function Bootstrapper.bindToSimulation(
 	modules: ModuleList,
 	methodName: string,
-	frequency: Enum.StepFrequency?
+	frequency: Enum.StepFrequency?,
+	priority: number?
 ): Cleanup
-	if not frequency then
-		return bind(modules, methodName, RunService.PreSimulation)
-	end
 	return bind(modules, methodName, function(run)
-		return RunService:BindToSimulation(run, frequency)
+		return RunService:BindToSimulation(run, frequency, priority)
 	end)
 end
 
@@ -620,6 +631,27 @@ end
 ]=]
 function Bootstrapper.bindToPreAnimation(modules: ModuleList, methodName: string): Cleanup
 	return bind(modules, methodName, RunService.PreAnimation)
+end
+
+--[=[
+	Hooks a specified method in all modules to `RunService:BindToAnimation`, which runs at a fixed rate.
+	@function bindToAnimation
+	@within Bootstrapper
+	@param modules { Instance | LoadedModule } -- An array of ModuleScripts, Folders, or loaded modules.
+	@param methodName string -- The method to call. Prefix with '.' for standard calls; otherwise, the module is implicitly passed as 'self'.
+	@param frequency Enum.StepFrequency? -- How often to run. Defaults to 30 times per second.
+	@param priority number? -- Execution priority relative to other animation bindings. Defaults to 2000.
+	@return Cleanup -- A cleanup function to disconnect the binding.
+]=]
+function Bootstrapper.bindToAnimation(
+	modules: ModuleList,
+	methodName: string,
+	frequency: Enum.StepFrequency?,
+	priority: number?
+): Cleanup
+	return bind(modules, methodName, function(run)
+		return RunService:BindToAnimation(run, frequency, priority)
+	end)
 end
 
 --[=[
