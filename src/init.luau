@@ -399,7 +399,7 @@ function Bootstrapper.loadChildren(parent: Instance, predicate: PredicateFn?): (
 end
 
 --[=[
-	Requires all descendant ModuleScripts within a given parent, sorted by name.
+	Requires all descendant ModuleScripts within a given parent, sorted by name across all folders.
 	@yields
 	@function loadDescendants
 	@within Bootstrapper
