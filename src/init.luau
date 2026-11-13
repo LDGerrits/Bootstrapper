@@ -386,8 +386,7 @@ function Bootstrapper.byName(matchName: string): PredicateFn
 end
 
 --[=[
-	Requires all direct child ModuleScripts within a given parent.
-	Returns an array of loaded modules to guarantee order execution.
+	Requires all direct child ModuleScripts within a given parent, sorted by name.
 	@yields
 	@function loadChildren
 	@within Bootstrapper
@@ -400,8 +399,7 @@ function Bootstrapper.loadChildren(parent: Instance, predicate: PredicateFn?): (
 end
 
 --[=[
-	Requires all descendant ModuleScripts within a given parent.
-	Returns an array of loaded modules to guarantee order execution.
+	Requires all descendant ModuleScripts within a given parent, sorted by name.
 	@yields
 	@function loadDescendants
 	@within Bootstrapper
@@ -475,7 +473,7 @@ end
 
 --[=[
 	Calls all methods simultaneously using multiple threads.
-	Fastest execution and does not yield, but order of completion is not guaranteed.
+	Does not yield, and order of completion is not guaranteed.
 	@function spawnConcurrent
 	@within Bootstrapper
 	@param modules { Instance | LoadedModule } -- An array of ModuleScripts, Folders, or loaded modules.
