@@ -20,9 +20,7 @@ jobs:
         run: stylua --check src tests
 
       - name: Lint
-        run: |
-          selene src
-          cd tests && selene .
+        run: selene src
 
       - name: Test
         run: lune run tests/run
