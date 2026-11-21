@@ -1,5 +1,7 @@
 --!strict
---v2.0.0 • LDGerrits
+-- Bootstrapper v2.0.0
+-- https://github.com/LDGerrits/Bootstrapper
+-- MIT License, Copyright (c) 2026 Loek Gerrits
 --[=[
 	@class Bootstrapper
 	A lightweight, agnostic module loader and scheduler for Roblox.
