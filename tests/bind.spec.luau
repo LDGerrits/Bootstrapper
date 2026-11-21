@@ -103,6 +103,36 @@ test('a bound method that errors does not stop the others', function()
 	expect(roblox.errors[1]).toMatch('^%[Bootstrapper%] Error in Broken:Update%(%)\n    update failed')
 end)
 
+test('a bound method can fire its own event without disturbing the outer call', function()
+	local log = {}
+	local signal = Roblox.signal()
+	local function step(name, callback)
+		return {
+			Update = function(_, value)
+				table.insert(log, `{name}{value}`)
+				callback(value)
+			end,
+		}
+	end
+
+	local roblox = Roblox.new()
+	roblox.Bootstrapper.bindTo({
+		step('A', function(value)
+			if value == 1 then
+				signal:Fire(2)
+			end
+		end),
+		step('B', function()
+			error('update failed', 0)
+		end),
+		step('C', function() end),
+	}, 'Update', signal)
+
+	signal:Fire(1)
+	expect(log).toEqual({ 'A1', 'A2', 'B2', 'C2', 'B1', 'C1' })
+	expect(#roblox.errors).toBe(2)
+end)
+
 test('profiling labels every bound method and sets its memory category', function()
 	local roblox = Roblox.new()
 	local categories = {}
