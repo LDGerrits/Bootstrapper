@@ -1,4 +1,3 @@
--- A small fake of the Roblox APIs that Bootstrapper uses, so it can be tested in Lune
 local fs = require('@lune/fs')
 local luau = require('@lune/luau')
 local task = require('@lune/task')
@@ -57,10 +56,13 @@ function Roblox.folder(name, children)
 	return Roblox.instance('Folder', name, children)
 end
 
--- `value` is returned by require, or called by require when it is a function
 function Roblox.module(name, value)
 	local moduleScript = Roblox.instance('ModuleScript', name)
-	moduleScript.value = value
+	moduleScript.load = if type(value) == 'function'
+		then value
+		else function()
+			return value
+		end
 	return moduleScript
 end
 
@@ -98,9 +100,8 @@ local function createRunService(context)
 	for _, name in { 'Heartbeat', 'Stepped', 'PreSimulation', 'PostSimulation', 'PreAnimation', 'PreRender' } do
 		RunService[name] = Roblox.signal()
 	end
-	-- Fired by tests to run what BindToSimulation and BindToAnimation bound
-	RunService.Simulation = Roblox.signal()
-	RunService.Animation = Roblox.signal()
+	RunService.simulationSignal = Roblox.signal()
+	RunService.animationSignal = Roblox.signal()
 	RunService.renderSteps = {}
 
 	function RunService:IsClient()
@@ -117,18 +118,17 @@ local function createRunService(context)
 
 	function RunService:BindToSimulation(callback, frequency, priority)
 		self.simulationArgs = { frequency, priority }
-		return self.Simulation:Connect(callback)
+		return self.simulationSignal:Connect(callback)
 	end
 
 	function RunService:BindToAnimation(callback, frequency, priority)
 		self.animationArgs = { frequency, priority }
-		return self.Animation:Connect(callback)
+		return self.animationSignal:Connect(callback)
 	end
 
 	return RunService
 end
 
--- Loads a fresh copy of Bootstrapper and returns it with the fake environment's state
 function Roblox.new()
 	local context = {
 		isClient = true,
@@ -163,12 +163,7 @@ function Roblox.new()
 			assert(moduleScript.ClassName == 'ModuleScript', 'Attempted to call require with invalid argument(s).')
 			if not moduleScript.required then
 				moduleScript.required = true
-				local value = moduleScript.value
-				moduleScript.success, moduleScript.result = pcall(if type(value) == 'function'
-					then value
-					else function()
-						return value
-					end)
+				moduleScript.success, moduleScript.result = pcall(moduleScript.load)
 			end
 			if not moduleScript.success then
 				error(moduleScript.result, 0)

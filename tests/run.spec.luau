@@ -6,7 +6,6 @@ local Test = require('./test')
 local test, expect = Test.test, Test.expect
 local folder, module = Roblox.folder, Roblox.module
 
--- A module whose Init logs when it starts and ends, yielding for `seconds` in between
 local function logger(log, name, seconds)
 	return {
 		Init = function()

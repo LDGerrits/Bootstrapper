@@ -4,7 +4,6 @@ local Test = require('./test')
 local test, expect = Test.test, Test.expect
 local folder, module = Roblox.folder, Roblox.module
 
--- A module whose Update logs its name, self and arguments
 local function recorder(log, name)
 	return {
 		Update = function(self, ...)
@@ -192,10 +191,11 @@ test('bindToSimulation and bindToAnimation pass the frequency and priority', fun
 	local roblox = Roblox.new()
 	for _, name in { 'Simulation', 'Animation' } do
 		local log = {}
+		local signal = roblox.RunService[`{name:lower()}Signal`]
 		local cleanup = roblox.Bootstrapper[`bindTo{name}`]({ recorder(log, name) }, 'Update', 'Hz60', 100)
-		roblox.RunService[name]:Fire(1 / 60)
+		signal:Fire(1 / 60)
 		cleanup()
-		roblox.RunService[name]:Fire(1 / 60)
+		signal:Fire(1 / 60)
 		expect(roblox.RunService[`{name:lower()}Args`]).toEqual({ 'Hz60', 100 })
 		expect(#log).toBe(1)
 	end

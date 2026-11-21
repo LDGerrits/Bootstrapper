@@ -77,7 +77,6 @@ local function addError(errors: Errors, key: string, message: string)
 	errors[uniqueKey] = message
 end
 
--- Returns a module's short name and its unique full name
 local function getNames(value: any): (string, string)
 	local source = if type(value) == 'table' then moduleSources[value] else value
 	if typeof(source) == 'Instance' then
@@ -131,7 +130,6 @@ local function getModuleScripts(instances: { Instance }, predicate: PredicateFn?
 	return moduleScripts
 end
 
--- Expands folders into their ModuleScripts and removes duplicates
 local function resolveModules(modules: ModuleList, predicate: PredicateFn?): { any }
 	local queue = {}
 	local seen = {}
@@ -166,7 +164,6 @@ local function loadModules(modules: ModuleList, predicate: PredicateFn?): (Loade
 	return loadedModules, next(errors) ~= nil and errors or nil
 end
 
--- '.method' calls without self, ':method' and 'method' pass the module as self
 local function parseMethodName(methodName: string): (string, boolean)
 	local prefix = methodName:sub(1, 1)
 	if prefix == '.' or prefix == ':' then
@@ -175,7 +172,6 @@ local function parseMethodName(methodName: string): (string, boolean)
 	return methodName, true
 end
 
--- Returns nil if the module has no such method, including strict modules that error on unknown keys
 local function getMethod(module: LoadedModule, methodName: string): ((...any) -> ...any)?
 	local success, method = pcall(function()
 		return module[methodName]
@@ -266,7 +262,6 @@ local function dispatch(
 			end)
 		end
 
-		-- Only yield if a method yielded, otherwise nothing would resume us
 		if shouldWait and pending > 0 then
 			isWaiting = true
 			coroutine.yield()
@@ -291,7 +286,6 @@ local function dispatch(
 	return loadedModules, next(errors) ~= nil and errors or nil
 end
 
--- Calls the method on every module each time the event fires
 local function bind(modules: ModuleList, methodName: string, event: Event): Cleanup
 	local parsedMethodName, includeSelf = parseMethodName(methodName)
 	local targets: { { module: LoadedModule, method: (...any) -> ...any, name: string, label: string } } = {}
@@ -312,7 +306,6 @@ local function bind(modules: ModuleList, methodName: string, event: Event): Clea
 		return function() end
 	end
 
-	-- Runs every frame, so it uses one xpcall for all modules and resumes after the module that errored
 	local function run(...)
 		local index = 0
 		local count = #targets

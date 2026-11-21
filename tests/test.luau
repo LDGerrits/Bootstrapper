@@ -1,15 +1,15 @@
 local task = require('@lune/task')
 
 local TIMEOUT = 5
+local MAX_FORMAT_DEPTH = 2
 
 local tests = {}
 
--- Only formats two levels deep, as instances refer to each other
 local function format(value, depth: number?)
 	local level = depth or 0
 	if type(value) == 'string' then
 		return `'{value}'`
-	elseif type(value) == 'table' and level < 2 then
+	elseif type(value) == 'table' and level < MAX_FORMAT_DEPTH then
 		local parts = {}
 		for key, item in value do
 			table.insert(parts, `{format(key, level + 1)}: {format(item, level + 1)}`)
@@ -69,7 +69,6 @@ local function test(name: string, callback: () -> ())
 	table.insert(tests, { name = name, callback = callback })
 end
 
--- Runs each test in its own thread so a test that never finishes times out instead of hanging
 local function run(): number
 	local failures = 0
 	for _, entry in tests do
