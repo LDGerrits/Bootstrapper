@@ -155,7 +155,3 @@ cleanupRenderStep()
 cleanupInterval()
 cleanupGameState()
 ```
-
-## Development
-
-Install the tools with [Rokit](https://github.com/rojo-rbx/rokit) (`rokit install`), then run the tests with `lune run tests/run`. They load Bootstrapper in a small fake of the Roblox APIs it uses, so they run without Studio.
