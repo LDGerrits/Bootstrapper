@@ -22,5 +22,10 @@ jobs:
       - name: Lint
         run: selene src
 
+      - name: Type Check
+        run: |
+          curl -sSfLo globalTypes.d.luau https://raw.githubusercontent.com/JohnnyMorganz/luau-lsp/main/scripts/globalTypes.d.luau
+          luau-lsp analyze --platform=roblox --definitions=@roblox=globalTypes.d.luau src
+
       - name: Test
         run: lune run tests/run
