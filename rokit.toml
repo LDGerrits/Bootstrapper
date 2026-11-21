@@ -7,4 +7,6 @@
 StyLua = "JohnnyMorganz/StyLua@2.3.1"
 selene = "Kampfkarren/selene@0.29.0"
 rojo = "rojo-rbx/rojo@7.6.0"
-rbxcloud = "Sleitnick/rbxcloud@0.17.0"
+wally = "UpliftGames/wally@0.3.2"
+lune = "lune-org/lune@0.11.0"
+luau-lsp = "JohnnyMorganz/luau-lsp@1.70.1"

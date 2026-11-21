@@ -14,7 +14,7 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 * **Centralized Scheduler:** Iterate over your modules and fire their updates synchronously.
 * **Luau Method Syntax:** Use standard dot or colon notation (`.` or `:`) in your string arguments to explicitly call functions or inject `self` for object methods.
 * **Flexible Event Binding:** Hook a sequence of modules directly to `RunService` events, `RBXScriptSignals`, or custom Signal objects.
-* **Automatic Memory Profiling:** Automatically assigns `debug.setmemorycategory` to every module's thread and `RunService` connection so your `MicroProfiler` is readable.
+* **Built-in Profiling:** Modules are loaded and run under their own memory category, so the Developer Console shows memory usage per module. Call `Bootstrapper.setProfiling(true)` to do the same for bound methods and label them in the `MicroProfiler`.
 * **Lazy Require:** Pass raw `ModuleScript` instances directly as argument. Bootstrapper will automatically require them.
 
 ## Installation
@@ -24,8 +24,12 @@ Bootstrapper solves this by treating execution flow as a single, managed pipelin
 Add this to your wally.toml:
 
 ```
-ldgerrits/bootstrapper@1.2.2
+ldgerrits/bootstrapper@2.0.0
 ```
+
+### Model File
+
+Download `Bootstrapper.rbxm` from the [latest release](https://github.com/LDGerrits/Bootstrapper/releases/latest) and drag it into `ReplicatedStorage` in Studio.
 
 ## Quick Start
 ```lua
@@ -34,16 +38,18 @@ local Bootstrapper = require(packages.Bootstrapper)
 -- Strict boot sequence (manual order for core systems)
 local bootSequence = { path.to.DataService, path.to.PlayerService, path.to.ZoneService }
 Bootstrapper.run(bootSequence, ':init') -- injects self
-Bootstrapper.runAsync(bootSequence, ':start') -- injects self
+Bootstrapper.spawn(bootSequence, ':start') -- injects self
 
 -- Automatic discovery (A-Z sorted)
 local systems = Bootstrapper.loadChildren(path.to.Systems, Bootstrapper.byName('System$'))
 
--- Use '.run' for a strict A-Z sequence, or '.runConcurrent()' if not
+-- Use '.run()' for a strict A-Z sequence, or '.runConcurrent()' if not
 Bootstrapper.run(systems, '.init') -- does NOT inject self
-Bootstrapper.runConcurrent(systems, '.start') -- does NOT inject self
 
--- Maintains alphabetical execution every frame with auto-memory profiling.
+-- Use '.spawn()' or '.spawnConcurrent()' for methods that keep running
+Bootstrapper.spawnConcurrent(systems, '.start') -- does NOT inject self
+
+-- Maintains alphabetical execution every frame.
 Bootstrapper.bindToHeartbeat(systems, '.onUpdate') -- does NOT inject self
 
 -- Run every second without drift.
@@ -64,10 +70,10 @@ local services, errors = Bootstrapper.loadDescendants(path.to.Services, Bootstra
 
 ### 2. Manual Sequences
 
-You can use `.loadSequence()` to define a manual order using an array `ModuleScript` instances. This sequence can be stored and reused for all lifecycle stages.
+You can use `.load()` to define a manual order using an array of `ModuleScript` instances. This sequence can be stored and reused for all lifecycle stages. Like the other load functions, it takes an optional predicate.
 
 ```Lua
-local services, errors = Bootstrapper.loadSequence({
+local services, errors = Bootstrapper.load({
     path.to.DataService,
     path.to.PlayerService,
     path.to.AssetService,
@@ -108,21 +114,31 @@ Bootstrapper.bindToHeartbeat({
 
 ### 5. Execution Flow Control
 
-* **.run():** Sequential & Yielding. Yields until every module finishes in order. Returns successful modules and an error map.
+* **.run():** Sequential & Yielding. Yields until every module finishes in order. Returns every loaded module except those whose method errored, plus an error map.
 
-* **.runAsync():** Sequential & Non-yielding. Executes the sequence in a background thread while maintaining order.
+* **.runConcurrent():** Concurrent & Yielding. Fires all methods simultaneously and yields until every module finishes. Methods start in order but may finish in any order. Returns every loaded module except those whose method errored, in their original order, plus an error map.
 
-* **.runConcurrent():** Concurrent & Non-yielding. Fires all methods simultaneously. Best for independent tasks where order doesn't matter.
+* **.spawn():** Sequential & Non-yielding. Executes the sequence in a background thread while maintaining order.
+
+* **.spawnConcurrent():** Concurrent & Non-yielding. Fires all methods simultaneously. Best for independent tasks where order doesn't matter.
+
+`.run()` and `.runConcurrent()` warn when they are still yielding after 10 seconds. Use `.spawn()` or `.spawnConcurrent()` for methods that never return, such as game loops.
+
+The error map is keyed by each module's full name, such as `ServerScriptService.Services.DataService`.
 
 ```Lua
 -- Sequential & Yielding
+-- Drops modules whose init errored, so they are not started below
 local services, errors = Bootstrapper.run(services, '.init')
 
+-- Concurrent & Yielding
+Bootstrapper.runConcurrent(services, '.loadData')
+
 -- Sequential & Non-yielding
-Bootstrapper.runAsync(services, '.postInit')
+Bootstrapper.spawn(services, '.postInit')
 
 -- Concurrent & Non-yielding
-Bootstrapper.runConcurrent(services, '.start', gameState)
+Bootstrapper.spawnConcurrent(services, '.start', gameState)
 ```
 
 ### 6. Event Binding
@@ -139,3 +155,7 @@ cleanupRenderStep()
 cleanupInterval()
 cleanupGameState()
 ```
+
+## Development
+
+Install the tools with [Rokit](https://github.com/rojo-rbx/rokit) (`rokit install`), then run the tests with `lune run tests/run`. They load Bootstrapper in a small fake of the Roblox APIs it uses, so they run without Studio.

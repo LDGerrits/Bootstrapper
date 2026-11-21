@@ -8,34 +8,7 @@ gitRepoUrl = "https://github.com/LDgerrits/Bootstrapper"
 gitSourceBranch = "main"
 changelog = false
 
-[home]
-enabled = true
-includeReadme = false
-
-[[home.features]]
-title = "Deterministic Execution"
-description = "Load modules alphabetically or provide a strict manual sequence. Your game will start exactly the same way every single time."
-
-[[home.features]]
-title = "Centralized Scheduler"
-description = "Iterate over your modules and fire their updates synchronously."
-
-[[home.features]]
-title = "Luau Method Syntax"
-description = "Use standard dot or colon notation (`.` or `:`) in your string arguments to explicitly call static functions or inject `self` for object methods."
-
-[[home.features]]
-title = "Flexible Event Binding"
-description = "Hook a sequence of modules directly to `RunService` events, `RBXScriptSignals`, or custom Signal objects."
-
-[[home.features]]
-title = "Automatic Memory Profiling"
-description = "Automatically assigns `debug.setmemorycategory` to every module's thread and `RunService` connection so your `MicroProfiler` is readable."
-
-[[home.features]]
-title = "Lazy Require"
-description = "Pass raw `ModuleScript` instances directly as argument. Bootstrapper will automatically require them."
-
+[docusaurus]
 organizationName = "LDGerrits"
 projectName = "Bootstrapper"
 url = "https://LDGerrits.github.io"

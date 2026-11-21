@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Tools
+        uses: CompeyDev/setup-rokit@v0.2.1
+
+      - name: Check Formatting
+        run: stylua --check src tests
+
+      - name: Lint
+        run: selene src
+
+      - name: Type Check
+        run: |
+          curl -sSfLo globalTypes.d.luau https://raw.githubusercontent.com/JohnnyMorganz/luau-lsp/main/scripts/globalTypes.d.luau
+          luau-lsp analyze --platform=roblox --definitions=@roblox=globalTypes.d.luau src
+          luau-lsp analyze --platform=roblox --definitions=@roblox=globalTypes.d.luau --flag:LuauSolverV2=true src
+
+      - name: Test
+        run: lune run tests/run
