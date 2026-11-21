@@ -66,7 +66,7 @@ local function reportError(message: string, trace: string?)
 		message ..= `\n---- Stack trace ----{trace}`
 	end
 	local formatted = (`[Bootstrapper] {message}`):gsub('\n', '\n    ')
-	task.spawn(error, formatted, 0)
+	task.spawn(error :: any, formatted, 0)
 end
 
 local function addError(errors: Errors, key: string, message: string)
