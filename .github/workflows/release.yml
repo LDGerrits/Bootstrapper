@@ -1,12 +1,12 @@
 name: Release
 
 on:
-  release:
-    types:
-      - published
+  push:
+    tags:
+      - 'v*'
 
 jobs:
-  upload:
+  release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -20,7 +20,7 @@ jobs:
       - name: Build Model
         run: rojo build default.project.json -o Bootstrapper.rbxm
 
-      - name: Upload Model
-        run: gh release upload "${{ github.event.release.tag_name }}" Bootstrapper.rbxm
+      - name: Create Release
+        run: gh release create "${{ github.ref_name }}" Bootstrapper.rbxm --title "${{ github.ref_name }}" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
