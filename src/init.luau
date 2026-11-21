@@ -37,14 +37,15 @@ export type Task =
 	| { Task }
 
 local function doCleanup(task: any)
-	if typeof(task) == 'Instance' then
+	local kind = typeof(task)
+	if kind == 'Instance' then
 		task:Destroy()
-	elseif typeof(task) == 'RBXScriptConnection' then
+	elseif kind == 'RBXScriptConnection' then
 		task:Disconnect()
-	elseif type(task) == 'function' then
+	elseif kind == 'function' then
 		task()
-	elseif type(task) == 'table' then
-		local method = task.destroy or task.Destroy or task.Disconnect or task.disconnect
+	elseif kind == 'table' then
+		local method: ((any) -> ())? = task.destroy or task.Destroy or task.Disconnect or task.disconnect
 		if type(method) == 'function' then
 			method(task)
 		else
@@ -78,7 +79,7 @@ local function addError(errors: Errors, key: string, message: string)
 end
 
 local function getNames(value: any): (string, string)
-	local source = if type(value) == 'table' then moduleSources[value] else value
+	local source: unknown = if type(value) == 'table' then moduleSources[value] else value
 	if typeof(source) == 'Instance' then
 		return source.Name, source:GetFullName()
 	end
@@ -121,7 +122,7 @@ local function getModuleScripts(instances: { Instance }, predicate: PredicateFn?
 		end
 	end
 
-	table.sort(moduleScripts, function(a, b)
+	table.sort(moduleScripts, function(a: ModuleScript, b: ModuleScript)
 		if a.Name == b.Name then
 			return a:GetFullName() < b:GetFullName()
 		end
@@ -152,7 +153,7 @@ local function resolveModules(modules: ModuleList, predicate: PredicateFn?): { a
 	return queue
 end
 
-local function loadModules(modules: ModuleList, predicate: PredicateFn?): (LoadedModules, Errors?)
+local function loadModules(modules: { any }, predicate: PredicateFn?): (LoadedModules, Errors?)
 	local loadedModules: LoadedModules = {}
 	local errors: Errors = {}
 	for _, value in resolveModules(modules, predicate) do
