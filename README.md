@@ -27,6 +27,10 @@ Add this to your wally.toml:
 ldgerrits/bootstrapper@2.0.0
 ```
 
+### Model File
+
+Download `Bootstrapper.rbxm` from the [latest release](https://github.com/LDGerrits/Bootstrapper/releases/latest) and drag it into `ReplicatedStorage` in Studio.
+
 ## Quick Start
 ```lua
 local Bootstrapper = require(packages.Bootstrapper)
